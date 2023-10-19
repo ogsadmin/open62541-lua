@@ -466,7 +466,6 @@ class UA_ClientConfig_Proxy {
 	UA_ClientConfig *_config;
 protected:
 	friend class UA_Client_Proxy;
-	friend class UA_Client_CyclicIO;
 
 	UA_ClientConfig_Proxy(UA_ClientConfig *config) : _config(config) {
 		_config->logger = XTraceLogger_;
@@ -882,82 +881,84 @@ public:
 		*/
 		return UA_Client_run_iterate(this->_client, waitInternal);
 	}
-	
+
 };
 
 // =============================================================================
+#include "IOThread_Params.h"
+
+class UA_ClientConfig_Proxy_CyclicIO {
+	IOThread_Params *_params;
+protected:
+	friend class UA_Client_Proxy;
+	friend class UA_Client_CyclicIO;
+
+	UA_ClientConfig_Proxy_CyclicIO(IOThread_Params *params) : _params(params) {
+		_params->logger = (UA_Logger *)&XTraceLogger_;
+	}
+public:
+	void setTimeout(int timeout) {
+		_params->timeout = timeout;
+	}
+	void setSecureChannelLifeTime(int time) {
+		_params->secureChannelLifeTime = time;
+	}
+#if 0
+	void setProductURI(const std::string& uri) {
+		/*
+		UA_String_clear(&_config->buildInfo.productUri);
+		_config->buildInfo.productUri = UA_STRING_ALLOC((char*)uri.c_str())
+		*/
+		UA_String_clear(&_config->clientDescription.productUri);
+		_config->clientDescription.productUri = UA_STRING_ALLOC((char*)uri.c_str());
+	}
+	void setApplicationURI(const std::string& uri) {
+		UA_String_clear(&_config->clientDescription.applicationUri);
+		_config->clientDescription.applicationUri = UA_STRING_ALLOC((char*)uri.c_str());
+	}
+	void setApplicationName(const std::string& locale, const std::string& name) {
+		UA_LocalizedText_clear(&_config->clientDescription.applicationName);
+		_config->clientDescription.applicationName = UA_LOCALIZEDTEXT_ALLOC(locale.c_str(), name.c_str());
+	}
+#endif
+};
 
 class UA_Client_CyclicIO {
 protected:
-	UA_Client_CyclicIO(UA_Client_CyclicIO& prox);
-	UA_Client* _client;
+	//UA_Client_CyclicIO(UA_Client_CyclicIO& prox);
+	//UA_Client* _client;
 	TOpcUA_IOThread* _ioThread;
+	IOThread_Params _params;
 
 public:
-	UA_ClientConfig_Proxy *_config;
+	UA_ClientConfig_Proxy_CyclicIO *_config;
 
 	UA_Client_CyclicIO()
 	: _ioThread(NULL)
 	{
-		//_stateCallbackNew = (UA_ClientState)-1;
-		_client = UA_Client_new();
-		if (!_client) {
-			printf("Initialized UA_Client failure!!!");
-			exit(-1);
-		}
-		UA_ClientConfig* cc = UA_Client_getConfig(_client);
-		UA_ClientConfig_setDefault(cc);
-
-		_config = new UA_ClientConfig_Proxy(cc);
-		_ioThread = new TOpcUA_IOThread(_client);
+		// TODO: start resumed and add a "Start()" function - this would allow
+		// setting parameters after instantiating the OPCUA CyclicIO Client.
+		_params.logger = (UA_Logger *)&XTraceLogger_;
+		_ioThread = new TOpcUA_IOThread(&_params);
+		_config = new UA_ClientConfig_Proxy_CyclicIO(&_params);
 	}
 
 	UA_Client_CyclicIO(UA_MessageSecurityMode securityMode, const std::string& priCert, const std::string& priKey)
 	: _ioThread(NULL)
-    {
-		/* Load certificate and private key */
-		UA_ByteString certificate = loadFile(priCert.c_str());
-		UA_ByteString privateKey  = loadFile(priKey.c_str());
-
-		/* Load the trustList. Load revocationList is not supported now */
-		/* trust list not support for now
-		const size_t trustListSize = 0;
-		if(argc > MIN_ARGS)
-			trustListSize = (size_t)argc-MIN_ARGS;
-		UA_STACKARRAY(UA_ByteString, trustList, trustListSize);
-		for(size_t trustListCount = 0; trustListCount < trustListSize; trustListCount++)
-			trustList[trustListCount] = loadFile(argv[trustListCount+4]);
-		*/
-
-		UA_ByteString *trustList = NULL;
-		size_t trustListSize = 0;
-
-		UA_ByteString *revocationList = NULL;
-		size_t revocationListSize = 0;
-
-		_client = UA_Client_new();
-		UA_ClientConfig *cc = UA_Client_getConfig(_client);
-		cc->securityMode = securityMode;
-#ifdef UA_ENABLE_ENCRYPTION
-		UA_StatusCode rc = UA_ClientConfig_setDefaultEncryption(cc, certificate, privateKey,
-				trustList, trustListSize,
-				revocationList, revocationListSize);
-#endif
-		UA_ByteString_clear(&certificate);
-		UA_ByteString_clear(&privateKey);
-
-		/*
-		for(size_t deleteCount = 0; deleteCount < trustListSize; deleteCount++) {
-			UA_ByteString_clear(&trustList[deleteCount]);
-		}
-		*/
-
-		/* Secure client connect */
-		cc->securityMode = securityMode; /* require encryption */
-
-		_config = new UA_ClientConfig_Proxy(cc);
-		_ioThread = new TOpcUA_IOThread(_client);
+	{
+		// TODO: start resumed and add a "Start()" function - this would allow
+		// setting parameters after instantiating the OPCUA CyclicIO Client.
+		_params.logger = (UA_Logger *)&XTraceLogger_;
+		_params.SecurityMode = securityMode;
+		_params.CertificateFile = priCert;
+		_params.PrivateKeyFile = priKey;
+		_ioThread = new TOpcUA_IOThread(&_params);
+		_config = new UA_ClientConfig_Proxy_CyclicIO(&_params);
 	}
+
+	// Alternative:
+	// TODO: Add a constructor, which can be passed a "Config (proxy)" object
+
 
 	~UA_Client_CyclicIO() {
 		if (_ioThread) {
@@ -966,7 +967,6 @@ public:
 			_ioThread->WaitFor();
 		}
         delete _ioThread;
-		UA_Client_delete(_client);
 	}
 
 	// return true if cyclic IO is running, else false
@@ -978,7 +978,8 @@ public:
 		UA_SecureChannelState chn_s;
 		UA_SessionState ss_s;
 		UA_StatusCode sc;
-		UA_Client_getState(_client, &chn_s, &ss_s, &sc);
+		_ioThread->GetClientState(&chn_s, &ss_s, &sc);
+//		UA_Client_getState(_client, &chn_s, &ss_s, &sc);
 
 		sol::variadic_results result;
 		result.push_back({ L, sol::in_place_type<UA_SecureChannelState>, chn_s});
@@ -1136,6 +1137,14 @@ void reg_opcua_client(sol::table& module) {
 		"run_iterate", &UA_Client_Proxy::run_iterate
 	);
 
+	module.new_usertype<UA_ClientConfig_Proxy_CyclicIO>("ClientConfig_CyclicIO",
+		"new", sol::no_constructor,
+		//"setProductURI", &UA_ClientConfig_Proxy_CyclicIO::setProductURI,
+		//"setApplicationURI", &UA_ClientConfig_Proxy_CyclicIO::setApplicationURI,
+		//"setApplicationName", &UA_ClientConfig_Proxy_CyclicIO::setApplicationName,
+		"setTimeout", &UA_ClientConfig_Proxy_CyclicIO::setTimeout,
+		"setSecureChannelLifeTime", &UA_ClientConfig_Proxy_CyclicIO::setSecureChannelLifeTime
+	);
 	module.new_usertype<UA_Client_CyclicIO>("CyclicIO",
 		sol::constructors<UA_Client_CyclicIO(), UA_Client_CyclicIO(UA_MessageSecurityMode, const std::string&, const std::string&)>(),
 		"config", &UA_Client_CyclicIO::_config,

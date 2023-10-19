@@ -7,13 +7,15 @@
 //---------------------------------------------------------------------------
 #include <open62541.h>
 #include <string>
+#include "IOThread_Params.h"
 //---------------------------------------------------------------------------
 class TOpcUA_IOThread : public TThread
 {
 protected:
 	void __fastcall Execute();
+	void InitConnection();
 public:
-	__fastcall TOpcUA_IOThread(UA_Client* client);
+	__fastcall TOpcUA_IOThread(IOThread_Params* params);
 	void Init(
 		const char* endpoint_url,
 		int ns,         		// namespace
@@ -28,6 +30,8 @@ public:
 	bool IsCyclicIoRunning();
 	UA_StatusCode SetOutputs(const UA_ByteString *newValue);
 	UA_StatusCode GetInputs(UA_ByteString *newValue);
+	void GetClientState(UA_SecureChannelState* chn_s, UA_SessionState* ss_s, UA_StatusCode* sc);
+
 	class Stats {
 	public:
 		Stats() : cntCyclesTotal(0), cntCyclesCurrent(0), cntReconnects(0), msCycle(0)  {}
@@ -74,6 +78,7 @@ private:
 		UA_Variant          varInitVal;         // initial value (read to get size of extension objects)
 	};
 	UA_Client* 			_client;
+    IOThread_Params*    _params;
 	CRITICAL_SECTION 	_cs;
 	int                 _state;
 	std::string         _url, _user, _pass;
@@ -83,9 +88,13 @@ private:
 	UA_StatusCode       _wrStatus, _rdStatus, _oldConnectStatus;
 	Stats               _stats;
 	DWORD               _statsTicker;
-    uint32_t            _statsLastCycles;
+	uint32_t            _statsLastCycles;
+    UA_StatusCode       _lasterr;
+	DWORD               _stateTicker;
+    int                 _connectRetries;
 	void StateMachine();
 	void ThreadSleep(DWORD ms);
+	void InitClientConfig();
 	UA_StatusCode readExtensionObjectValue(const UA_NodeId nodeId, UA_Variant *outValue);
 	UA_StatusCode writeExtensionObjectValue(const UA_NodeId nodeId, const UA_NodeId& dataTypeNodeId, const UA_ByteString *newValue);
 	UA_StatusCode initCyclicInfo(TOpcUA_IOThread::CyclicNode& cycNode);

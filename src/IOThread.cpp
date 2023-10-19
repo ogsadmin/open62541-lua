@@ -5,6 +5,7 @@
 
 #include "IOThread.h"
 #include "logger.h"
+#include "read_file.h"
 #pragma package(smart_init)
 //---------------------------------------------------------------------------
 
@@ -22,29 +23,65 @@
 //---------------------------------------------------------------------------
 extern bool gDllUnloadInProgress;
 
-__fastcall TOpcUA_IOThread::TOpcUA_IOThread(UA_Client* client)
-	: TThread(true), _client(client), _state(0), _oldConnectStatus(0) // always create suspended
+__fastcall TOpcUA_IOThread::TOpcUA_IOThread(IOThread_Params* params)
+	: TThread(true), _params(params), _client(NULL), _state(0), _oldConnectStatus(0) // always create suspended
 {
 	XTRACE(XPDIAG2, "OPC-UA IOThread instantiated");
 	InitializeCriticalSection(&_cs);
 }
 //---------------------------------------------------------------------------
+// This function is called to create a OPC-UA client connection context
+void TOpcUA_IOThread::InitClientConfig()
+{
+	if (_client != NULL) {
+		UA_Client_delete(_client);
+		_client = NULL;
+	}
+	//_stateCallbackNew = (UA_ClientState)-1;
+	_client = UA_Client_new();
+	if (!_client) {
+		XTRACE(XPFATAL, "InitClientConfig::OUT OF MEMORY!");
+		printf("Initialize UA_Client failure!!!");
+		// OUT OF MEMORY! This should NEVER EVER happen!!!
+		exit(-1);
+	}
+	UA_ClientConfig* cc = UA_Client_getConfig(_client);
+	_params->UpdateConfig(cc);
+/*
+	UA_ClientConfig_setDefault(cc);
+	_config = new UA_ClientConfig_Proxy(cc);
+	_ioThread = new TOpcUA_IOThread(_client, params);
+*/
+	// We also get the client configuration and modify it to link our
+	// local callbacks
+	_origUserConfig = *cc;
+	// Wire up the callbacks
+	cc->clientContext = this;
+	cc->stateCallback = &TOpcUA_IOThread::clientStateChangeTrampoline;
+	//cc->subscriptionInactivityCallback = &UA_Client_Proxy::subscriptionInactivityCallback;
+}
+void TOpcUA_IOThread::GetClientState(
+	UA_SecureChannelState* chn_s, UA_SessionState* ss_s, UA_StatusCode* sc)
+{
+	UA_Client_getState(_client, chn_s, ss_s, sc);
+}
+
 void __fastcall TOpcUA_IOThread::Execute()
 {
 	XTRACE(XPDIAG2, "OPC-UA IOThread instantiated");
 	NameThreadForDebugging(System::String(L"OpcUA_IOThread"));
 	_stats.tStarted = Now();
 	//---- Place thread code here ----
-	try {
-		while (!Terminated && !gDllUnloadInProgress) {
+	while (!Terminated && !gDllUnloadInProgress) {
+		try {
 			StateMachine();
 		}
-	}
-	catch (Exception& e) {
+		catch (Exception& e) {
 
-	}
-	catch (...) {
+		}
+		catch (...) {
 
+		}
 	}
 }
 void TOpcUA_IOThread::ThreadSleep(DWORD ms)
@@ -84,19 +121,34 @@ void TOpcUA_IOThread::clientStateCallback(UA_Client *client, UA_SecureChannelSta
 }
 void TOpcUA_IOThread::StateMachine()
 {
-	UA_StatusCode retval;
+	if (_state >= 10 && _state != 30 && _client != NULL) {
+		// cyclic IO is not currently active - in this case timing is not relevant
+		// anyway, so poll the UA client --> this allows handling connection tasks
+		// properly.
+		// poll the OPC-UA state machine...
+		// --> see https://www.open62541.org/doc/1.3/client.html#client
+		// --> and https://www.open62541.org/doc/1.3/client.html#client-async-services
+		UA_StatusCode connectStatus = UA_Client_run_iterate(_client, 100/*ms*/);
+	}
 
+	int old_state = _state;
 	switch(_state) {
 	case 0:  // Idle. Wait until we are initialized.
+		break;
+
+	case 1: // initialized, now create an UA Client object
+		InitClientConfig();
+		_state = 10;
 		break;
 
 	case 10: { // "Connecting": Initialized, try to setup and start.
 		// Do a blocking connect.
 		XTRACE(XPDIAG2, "%s: Starting to connect...", _url.c_str());
-		retval = UA_Client_connect(_client, _url.c_str());
-		if(retval != UA_STATUSCODE_GOOD) {
-			XTRACE(XPERRORS, "%s: Connect failed. Retcode=%d (%08Xh), Msg=%s", _url.c_str(), retval, retval, UA_StatusCode_name(retval));
-			ThreadSleep(10000);      // retry connecting every 10 seconds
+		_lasterr = 0;
+		_lasterr = UA_Client_connect(_client, _url.c_str());
+		if(_lasterr != UA_STATUSCODE_GOOD) {
+			XTRACE(XPERRORS, "%s: Connect failed. Retcode=%d (%08Xh), Msg=%s", _url.c_str(), _lasterr, _lasterr, UA_StatusCode_name(_lasterr));
+			_state = 99;
 		}
 		else {
 			_state = 20;
@@ -108,21 +160,22 @@ void TOpcUA_IOThread::StateMachine()
 		XTRACE(XPDIAG2, "%s: Connected, reading type definitions...", _url.c_str());
 		_stats.cntReconnects++;
 		_stats.cntCyclesCurrent = 0;
-        _statsLastCycles = 0;
+		_statsLastCycles = 0;
 		// get the write node info
-		retval = initCyclicInfo(_wr);
-		if (UA_STATUSCODE_GOOD != retval) {
+		_lasterr = initCyclicInfo(_wr);
+		if (UA_STATUSCODE_GOOD != _lasterr) {
 			// Some error occurred.
 			_state = 99;
 			break;
 		}
 		// get the read node info
-		retval = initCyclicInfo(_rd);
-		if (UA_STATUSCODE_GOOD != retval) {
+		_lasterr = initCyclicInfo(_rd);
+		if (UA_STATUSCODE_GOOD != _lasterr) {
 			// Some error occurred.
 			_state = 99;
 			break;
 		}
+		_connectRetries = 0;
 		_state = 30;
 //		// init write value
 		_varWr = *(UA_ByteString*)_wr.varInitVal.data;
@@ -134,10 +187,10 @@ void TOpcUA_IOThread::StateMachine()
 		// Do the cyclic IO. Ignore any errors for now.
 		_stats.msCycle = GetTickCount() - _tLastRW;
 		_tLastRW = GetTickCount();
-		retval = readwriteCyclic();
-		if (UA_STATUSCODE_GOOD != retval) {
+		_lasterr = readwriteCyclic();
+		if (UA_STATUSCODE_GOOD != _lasterr) {
 			// Read/write failed. Disconnect and reconnect...
-			XTRACE(XPERRORS, "%s: Error reading/writing: %08Xh (%s)", _url.c_str(), retval, UA_StatusCode_name(retval));
+			XTRACE(XPERRORS, "%s: Error reading/writing: %08Xh (%s)", _url.c_str(), _lasterr, UA_StatusCode_name(_lasterr));
 			_state = 99;
 			break;
 		}
@@ -152,12 +205,17 @@ void TOpcUA_IOThread::StateMachine()
 			int diffCycles = _stats.cntCyclesCurrent - _statsLastCycles;
 			int diffTime   = tIO - _statsTicker;
 			if (diffTime > 0) {
+				int msCycle = 0;
+				if (diffCycles > 0) {
+					msCycle = 60000 / diffCycles;
+				}
 				AnsiString sTotal = FormatDateTime("hh:nn:ss", Now() - _stats.tStarted);
 				AnsiString sConn = FormatDateTime("hh:nn:ss", Now() - _stats.tLastConnected);
-				XTRACE(XPDIAG2, "%s: OPC-UA connection stats: %d cycles/s, uptime %s, connected %s", _url.c_str(),
-					diffCycles*1000/diffTime, sTotal.c_str(), sConn.c_str()
+				XTRACE(XPDIAG2, "%s: OPC-UA connection stats: %d cycles/s (%d/%dms), uptime %s, connected %s", _url.c_str(),
+					diffCycles*1000/diffTime, msCycle, _tCycleMs, sTotal.c_str(), sConn.c_str()
 				);
 			}
+			_statsLastCycles = _stats.cntCyclesCurrent;
             _statsTicker = tIO;
 		}
 
@@ -178,6 +236,7 @@ void TOpcUA_IOThread::StateMachine()
 			// Check connect status.
 			if (UA_STATUSCODE_GOOD != connectStatus) {
 				// Some error occurred.
+				_lasterr = connectStatus;
 				_state = 99;
 				break;
 			}
@@ -204,13 +263,85 @@ void TOpcUA_IOThread::StateMachine()
 	}
 	break;
 
-	case 99: // Some error occurred. Disconnect and retry later.
+	case 99:
+		// Some error occurred. Disconnect and retry later.
 		UA_Client_disconnect(_client);
-		ThreadSleep(10000);      // retry connecting every 10 seconds
-		_state = 10;
+		_stateTicker = GetTickCount();
+		_connectRetries++;
+		_state = 900;
 		break;
 
+	case 900: {
+		// wait a second - so the lib can complete its disconnect
+		//UA_StatusCode connectStatus = UA_Client_run_iterate(_client, 100/*ms*/);
+		UA_SecureChannelState chn_s;
+		UA_SessionState ss_s;
+		UA_StatusCode sc;
+		UA_Client_getState(_client, &chn_s, &ss_s, &sc);
+		if (chn_s == UA_SECURECHANNELSTATE_CLOSED && ss_s == UA_SESSIONSTATE_CLOSED) {
+			// save to close...
+			_state = 910;
+		}
+/*
+		if (_client->connection.state > UA_CONNECTIONSTATE_CLOSED) {
+			// still connected, wait a bit more...
+		}
+*/
+/*
+		if (GetTickCount() - _stateTicker > 1000) {
+			_stateTicker = GetTickCount();
+			_state = 910;
+		}
+*/
 	}
+	break;
+
+	case 910:
+		// --> if (the connection has an error, a new client must be created!
+		// --> see https://www.open62541.org/doc/1.3/client.html#connect-to-a-server
+		if (_lasterr & 0x80000000) {
+			XTRACE(XPERRORS, "%s: Severe error occurred: %08Xh (%s)", _url.c_str(), _lasterr, UA_StatusCode_name(_lasterr));
+			_state = 920;
+		}
+		else {
+			// not a severe error, so reuse the client - but wait a bit more
+			if (_connectRetries > 10) {
+				_connectRetries = 10;       // limit to 10s retry time
+			}
+			if (GetTickCount() - _stateTicker > (1000*_connectRetries)) {
+				XTRACE(XPDIAG1, "%s: Wait done, reconnecting", _url.c_str());
+				_state = 10;
+			}
+		}
+		break;
+
+	case 920:
+		// we had a severe error - create a new client, but wait 10 seconds!
+		if (GetTickCount() - _stateTicker > 10000) {
+			// recreate a new client
+			XTRACE(XPWARN, "%s: Deleting OPC-UA client due to severe error.", _url.c_str());
+			UA_Client_delete(_client);
+			_client = 0;
+			_state = 1;
+			XTRACE(XPDIAG1, "%s: Recreating client and reconnecting...", _url.c_str());
+		}
+		break;
+
+	case 999:
+        // Dead as dead beef.
+		break;
+/*
+	case 999:
+		if (_client->connection.state > UA_CONNECTIONSTATE_CLOSED) {
+			// still connected, wait a bit more...
+		}
+		break;
+*/
+	}
+	if (old_state != _state) {
+		XTRACE(XPDIAG2, "%s: State change --> %d (lasterr=%08Xh)", _url.c_str(), _state, _lasterr);
+	}
+
 }
 //---------------------------------------------------------------------------
 bool TOpcUA_IOThread::IsCyclicIoRunning()
@@ -511,6 +642,7 @@ void TOpcUA_IOThread::Init(
 	_wr.Init(ns, wrNode, wrEncoding);
 	_rd.Init(ns, rdNode, rdEncoding);
 
+/*
 	// We also get the client configuration and modify it to link our
 	// local callbacks
 	UA_ClientConfig *cc = UA_Client_getConfig(_client);
@@ -519,8 +651,8 @@ void TOpcUA_IOThread::Init(
 	cc->clientContext = this;
 	cc->stateCallback = &TOpcUA_IOThread::clientStateChangeTrampoline;
 	//cc->subscriptionInactivityCallback = &UA_Client_Proxy::subscriptionInactivityCallback;
-
-	_state = 10;
+*/
+	_state = 1;
 	Resume();
 }
 //---------------------------------------------------------------------------

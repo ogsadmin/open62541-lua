@@ -110,13 +110,13 @@
         <BCC_UseClassicCompiler>false</BCC_UseClassicCompiler>
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <VerInfo_Locale>1033</VerInfo_Locale>
-        <Debugger_HostApplication>D:\Projekte\Kundenprojekte\Triumph\src\ww_hh - Triumph\bin\debug\lua5.1.exe</Debugger_HostApplication>
+        <Debugger_HostApplication>D:\Sandboxes\ogs\ogs-trunk\bin\debug\lua-5.1-dyn.exe</Debugger_HostApplication>
         <Debugger_RunParams>luaopcua_test_ogs_interface.lua</Debugger_RunParams>
-        <Debugger_CWD>D:\Projekte\Kundenprojekte\Triumph\src\ww_hh - Triumph\bin\debug</Debugger_CWD>
+        <Debugger_CWD>D:\Sandboxes\ogs\ogs-trunk\bin\debug</Debugger_CWD>
         <LinkPackageStatics>rtl.lib</LinkPackageStatics>
         <VerInfo_AutoGenVersion>true</VerInfo_AutoGenVersion>
         <VerInfo_MinorVer>2</VerInfo_MinorVer>
-        <VerInfo_Keys>CompanyName=;FileDescription=$(MSBuildProjectName);FileVersion=1.2.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProgramID=de.haller-erne.$(MSBuildProjectName);ProductName=$(MSBuildProjectName);ProductVersion=2.2.1.0;Comments=</VerInfo_Keys>
+        <VerInfo_Keys>CompanyName=Haller + Erne GmbH;FileDescription=$(MSBuildProjectName);FileVersion=1.2.0.0;InternalName=Lua OPCUA open62541 interface ;LegalCopyright=(c) 2023 Haller + Erne GmbH;LegalTrademarks=(c) 2023 Haller + Erne GmbH;OriginalFilename=LuaOPCUA.dll;ProgramID=de.haller-erne.$(MSBuildProjectName);ProductName=$(MSBuildProjectName);ProductVersion=3.1.0.0;Comments=</VerInfo_Keys>
         <ILINK_LibraryPath>$(BDSLIB)\$(PLATFORM)$(CC_SUFFIX)\debug;$(ILINK_LibraryPath)</ILINK_LibraryPath>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_2)'!=''">
@@ -159,6 +159,10 @@
         <CppCompile Include="src\IOThread.cpp">
             <DependentOn>src\IOThread.h</DependentOn>
             <BuildOrder>24</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="src\IOThread_Params.cpp">
+            <DependentOn>src\IOThread_Params.h</DependentOn>
+            <BuildOrder>22</BuildOrder>
         </CppCompile>
         <CppCompile Include="src\lua_opcua.cpp">
             <BuildOrder>5</BuildOrder>
