@@ -110,7 +110,7 @@
         <BCC_UseClassicCompiler>false</BCC_UseClassicCompiler>
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <VerInfo_Locale>1033</VerInfo_Locale>
-        <Debugger_HostApplication>D:\Sandboxes\ogs\ogs-trunk\bin\debug\lua-5.1-dyn.exe</Debugger_HostApplication>
+        <Debugger_HostApplication>D:\Sandboxes\ogs\ogs-trunk\bin\debug\Monitor.exe</Debugger_HostApplication>
         <Debugger_RunParams>luaopcua_test_ogs_interface.lua</Debugger_RunParams>
         <Debugger_CWD>D:\Sandboxes\ogs\ogs-trunk\bin\debug</Debugger_CWD>
         <LinkPackageStatics>rtl.lib</LinkPackageStatics>

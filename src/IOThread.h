@@ -74,6 +74,7 @@ private:
 		UA_NodeId 			nidNodeId;          // the variable nodeID (to read/write)
 		UA_NodeId 			nidDataType;        // the data type nodeID
 		UA_NodeId 			nidEncoding;        // the encoding nodeID
+		UA_NodeId 			ExpandedNodeId;     // The BLOB encoding as returned from the "ReadExtensionObject" initial call
 		UA_NodeClass 		nidNodeClass;       // the variable nodeID (to read/write)
 		UA_Variant          varInitVal;         // initial value (read to get size of extension objects)
 	};
@@ -95,7 +96,7 @@ private:
 	void StateMachine();
 	void ThreadSleep(DWORD ms);
 	void InitClientConfig();
-	UA_StatusCode readExtensionObjectValue(const UA_NodeId nodeId, UA_Variant *outValue);
+	UA_StatusCode readExtensionObjectValue(const UA_NodeId nodeId, UA_Variant *outValue, UA_NodeId* pExpandedNodeId);
 	UA_StatusCode writeExtensionObjectValue(const UA_NodeId nodeId, const UA_NodeId& dataTypeNodeId, const UA_ByteString *newValue);
 	UA_StatusCode initCyclicInfo(TOpcUA_IOThread::CyclicNode& cycNode);
 	UA_StatusCode readwriteCyclic();

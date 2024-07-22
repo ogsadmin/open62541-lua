@@ -395,7 +395,8 @@ UA_StatusCode TOpcUA_IOThread::readwriteCyclic()
 			retval_wr = writeExtensionObjectValue(_wr.nidNodeId, _wr.nidEncoding, &tmp);
 		} else {
 			// Default: use data type
-			retval_wr = writeExtensionObjectValue(_wr.nidNodeId, _wr.nidDataType, &tmp);
+//			retval_wr = writeExtensionObjectValue(_wr.nidNodeId, _wr.nidDataType, &tmp);
+			retval_wr = writeExtensionObjectValue(_wr.nidNodeId, _wr.ExpandedNodeId, &tmp);
 		}
 		// Clean the temporary variable
 		UA_ByteString_clear(&tmp);
@@ -408,7 +409,8 @@ UA_StatusCode TOpcUA_IOThread::readwriteCyclic()
 	// read:
 	UA_Variant var;
 	UA_Variant_init(&var);
-	retval_rd = TOpcUA_IOThread::readExtensionObjectValue(_rd.nidNodeId, &var);
+	//UA_NodeId ExpandedNodeId;
+	retval_rd = TOpcUA_IOThread::readExtensionObjectValue(_rd.nidNodeId, &var, NULL);
 	if (UA_STATUSCODE_GOOD == retval_rd) {
 		// check
 		if (UA_Variant_isScalar(&var) && (var.type == &UA_TYPES[UA_TYPES_STRING] || var.type == &UA_TYPES[UA_TYPES_BYTESTRING])) {
@@ -438,7 +440,7 @@ UA_StatusCode TOpcUA_IOThread::readwriteCyclic()
 
 //---------------------------------------------------------------------------
 // WARNING: the returned object *must* be freed after use!
-UA_StatusCode TOpcUA_IOThread::readExtensionObjectValue(const UA_NodeId nodeId, UA_Variant *outValue)
+UA_StatusCode TOpcUA_IOThread::readExtensionObjectValue(const UA_NodeId nodeId, UA_Variant *outValue, UA_NodeId* pExpandedNodeId)
 {
 	// Similar to UA_Client_readValueAttribute, but returns the "raw" (undecoded)
 	// data of an extension object as binary string.
@@ -457,6 +459,8 @@ UA_StatusCode TOpcUA_IOThread::readExtensionObjectValue(const UA_NodeId nodeId, 
 	request.nodesToRead = &item;
 	request.nodesToReadSize = 1;
 	UA_ReadResponse response = UA_Client_Service_read(_client, request);
+	// see: Variant_decodeBinaryUnwrapExtensionObject() ,
+	//      UA_findDataTypeByBinaryInternal()
 	UA_StatusCode retval = response.responseHeader.serviceResult;
 	if (retval == UA_STATUSCODE_GOOD) {
 		if (response.resultsSize == 1) {
@@ -489,7 +493,25 @@ UA_StatusCode TOpcUA_IOThread::readExtensionObjectValue(const UA_NodeId nodeId, 
 	if (res->value.type->typeKind == UA_DATATYPEKIND_EXTENSIONOBJECT) {
 		UA_ExtensionObject* eo = (UA_ExtensionObject*)(res->value.data);
 		//UA_ExtensionObjectEncoding encoding = eo->encoding;
-		//UA_NodeId nodeId = eo->content.encoded.typeId;
+		if (pExpandedNodeId) {
+			// create a new NodeID as a copy of the exisiting one - cleanup first!
+			switch(pExpandedNodeId->identifierType) {
+				case UA_NODEIDTYPE_STRING:
+				case UA_NODEIDTYPE_BYTESTRING:      // malloced types...
+					UA_String_clear(&pExpandedNodeId->identifier.string);
+					break;
+			}
+			*pExpandedNodeId = eo->content.encoded.typeId;
+			UA_String sTmp;
+			switch(pExpandedNodeId->identifierType) {
+				case UA_NODEIDTYPE_STRING:
+				case UA_NODEIDTYPE_BYTESTRING:      // malloced types...
+					UA_ByteString_allocBuffer(&sTmp, pExpandedNodeId->identifier.string.length);
+					memcpy(sTmp.data, pExpandedNodeId->identifier.string.data, pExpandedNodeId->identifier.string.length);
+					pExpandedNodeId->identifier.string = sTmp;  // use our newly allocated object
+					break;
+			}
+		}
 		int length = eo->content.encoded.body.length;
 		UA_Byte* data = eo->content.encoded.body.data;
 		UA_Variant_setScalarCopy(outValue, &eo->content.encoded.body,  &UA_TYPES[UA_TYPES_BYTESTRING]);
@@ -568,10 +590,14 @@ UA_StatusCode TOpcUA_IOThread::initCyclicInfo(TOpcUA_IOThread::CyclicNode& cycNo
 			retval = UA_Client_readNodeClassAttribute(_client, cycNode.nidNodeId, &cycNode.nidNodeClass);
 			if (UA_STATUSCODE_GOOD == retval) {
 				UA_Variant_init(&cycNode.varInitVal);
-				retval = readExtensionObjectValue(cycNode.nidNodeId, &cycNode.varInitVal);
+				retval = readExtensionObjectValue(cycNode.nidNodeId, &cycNode.varInitVal, &cycNode.ExpandedNodeId);
 				if (UA_STATUSCODE_GOOD == retval) {
 					int bytes = ((UA_ByteString*)cycNode.varInitVal.data)->length;
-					XTRACE(XPDIAG1, "    NodeClass resolved, inital value read, structure size=%d bytes.", bytes);
+					XTRACE(XPDIAG1, "    NodeClass resolved, inital value read, structure size=%d bytes, IdentifierType=%d", bytes, cycNode.ExpandedNodeId.identifierType);
+					UA_String idStr = UA_STRING_NULL;
+					UA_NodeId_print(&cycNode.ExpandedNodeId, &idStr);
+					XTRACE(XPDIAG1, "    -> Identifier: '%s'", idStr.data);
+					UA_String_clear(&idStr);
 				}
 				else {
 					XTRACE(XPERRORS, "%s: Failed to read ExtensionObjectValue for '%s'", _url.c_str(), cycNode.Name.c_str());
