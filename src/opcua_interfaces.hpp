@@ -120,7 +120,9 @@ public:
 			const UA_QualifiedName browseName,
 			const UA_DataTypeAttributes attr,
 			UA_NodeId *outNewNodeId) = 0;
+#if defined(UA_OPEN62541_VER) && UA_OPEN62541_VER > 1400
 	virtual const UA_DataType* findDataType(const UA_NodeId *typeId) = 0;
+#endif
 	virtual UA_StatusCode addMethod(const UA_NodeId requestedNewNodeId,
 			const UA_NodeId parentNodeId,
 			const UA_NodeId referenceTypeId,

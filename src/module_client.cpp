@@ -125,9 +125,13 @@ public:
 //		return outDataValue->status;
 //		return __UA_Client_readAttribute(_client, &nodeId, UA_ATTRIBUTEID_VALUE,
 //									 outDataValue, &UA_TYPES[UA_TYPES_VARIANT]);
+#if defined(UA_OPEN62541_VER) && UA_OPEN62541_VER > 1400
 		*outDataValue = UA_Client_read(_client, &id);
 		return outDataValue->status;
-
+#else
+		return __UA_Client_readAttribute(_client, &nodeId, UA_ATTRIBUTEID_VALUE,
+									 outDataValue, &UA_TYPES[UA_TYPES_VARIANT]);
+#endif
 	}
 	UA_StatusCode readExtensionObjectValue(const UA_NodeId nodeId, UA_Variant *outValue) {
 		// Similar to UA_Client_readValueAttribute, but returns the "raw" (undecoded)
@@ -272,7 +276,12 @@ public:
 		//return UA_Client_writeAttribute(_client, &val);
 		//return __UA_Client_writeAttribute(_client, &nodeId, UA_ATTRIBUTEID_VALUE,
 		//							  newDataValue, &UA_TYPES[UA_TYPES_VARIANT]);
+#if defined(UA_OPEN62541_VER) && UA_OPEN62541_VER > 1400
 		return UA_Client_write(_client, &val);
+#else
+		return __UA_Client_writeAttribute(_client, &nodeId, UA_ATTRIBUTEID_VALUE,
+									  newDataValue, &UA_TYPES[UA_TYPES_VARIANT]);
+#endif
 	}
 	UA_StatusCode writeExtensionObjectValue(const UA_NodeId nodeId, const UA_NodeId& dataTypeNodeId, const UA_Variant *newValue)
 	{
@@ -428,9 +437,11 @@ public:
 			UA_NodeId *outNewNodeId) {
 		return UA_Client_addDataTypeNode(_client, requestedNewNodeId, parentNodeId, referenceTypeId, browseName, attr, outNewNodeId);
 	}
+#if defined(UA_OPEN62541_VER) && UA_OPEN62541_VER > 1400
 	const UA_DataType* findDataType(const UA_NodeId *typeId) {
 		return UA_Client_findDataType(_client, typeId);
 	}
+#endif
 	UA_StatusCode addMethod(const UA_NodeId requestedNewNodeId,
 			const UA_NodeId parentNodeId,
 			const UA_NodeId referenceTypeId,

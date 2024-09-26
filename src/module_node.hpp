@@ -52,7 +52,7 @@ struct UA_Node_Finder : public UA_Node_callback {
 		auto reader = _mgr->getAttributeReader(); \
 		UA_StatusCode re = reader->read##PN(_id, &val); \
 		if (re != UA_STATUSCODE_GOOD) { \
-			UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Read node:%s property failed. StatusCode:%s", toString(_id), UA_StatusCode_name(re)); \
+			UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Read node:%s property failed. StatusCode:%s", toString(_id).c_str(), UA_StatusCode_name(re)); \
 		} \
 		return val; \
 	} \
@@ -60,7 +60,7 @@ struct UA_Node_Finder : public UA_Node_callback {
 		auto writer = _mgr->getAttributeWriter(); \
 		auto re = writer->write##PN(_id, &val); \
 		if (re != UA_STATUSCODE_GOOD) { \
-			UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Write node:%s property failed. StatusCode:%s", toString(_id), UA_StatusCode_name(re)); \
+			UA_LOG_INFO(UA_Log_Stdout, UA_LOGCATEGORY_USERLAND, "Write node:%s property failed. StatusCode:%s", toString(_id).c_str(), UA_StatusCode_name(re)); \
 		} \
 	} \
 	sol::variadic_results set_##PN##_lua(const PT& val, sol::this_state L) const { \
