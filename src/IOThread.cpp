@@ -145,7 +145,11 @@ void TOpcUA_IOThread::StateMachine()
 		// Do a blocking connect.
 		XTRACE(XPDIAG2, "%s: Starting to connect...", _url.c_str());
 		_lasterr = 0;
-		_lasterr = UA_Client_connect(_client, _url.c_str());
+		if (this->_user.length() == 0) {
+			_lasterr = UA_Client_connect(_client, _url.c_str());
+		} else {
+			_lasterr = UA_Client_connectUsername(_client, _url.c_str(), _user.c_str(), _pass.c_str());
+		}
 		if(_lasterr != UA_STATUSCODE_GOOD) {
 			XTRACE(XPERRORS, "%s: Connect failed. Retcode=%d (%08Xh), Msg=%s", _url.c_str(), _lasterr, _lasterr, UA_StatusCode_name(_lasterr));
 			_state = 99;
