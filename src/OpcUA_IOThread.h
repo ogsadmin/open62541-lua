@@ -1,13 +1,14 @@
 //---------------------------------------------------------------------------
 
-#ifndef IOThreadH
-#define IOThreadH
+#ifndef OpcUA_IOThreadH
+#define OpcUA_IOThreadH
 //---------------------------------------------------------------------------
 #include <System.Classes.hpp>
 //---------------------------------------------------------------------------
 #include <open62541.h>
 #include <string>
 #include "IOThread_Params.h"
+#include "Symbols.h"
 //---------------------------------------------------------------------------
 class TOpcUA_IOThread : public TThread
 {
@@ -30,7 +31,10 @@ public:
 	bool IsCyclicIoRunning();
 	UA_StatusCode SetOutputs(const UA_ByteString *newValue);
 	UA_StatusCode GetInputs(UA_ByteString *newValue);
+	UA_StatusCode GetOutputs(UA_ByteString *newValue);
 	void GetClientState(UA_SecureChannelState* chn_s, UA_SessionState* ss_s, UA_StatusCode* sc);
+	const he::Symbols::TypeNode& GetSymDefRd();
+	const he::Symbols::TypeNode& GetSymDefWr();
 
 	class Stats {
 	public:
@@ -77,11 +81,13 @@ private:
 		UA_NodeId 			ExpandedNodeId;     // The BLOB encoding as returned from the "ReadExtensionObject" initial call
 		UA_NodeClass 		nidNodeClass;       // the variable nodeID (to read/write)
 		UA_Variant          varInitVal;         // initial value (read to get size of extension objects)
+		int                 InitialReadLength;
+		he::Symbols::TypeNode SymbolDef;
 	};
 	UA_Client* 			_client;
     IOThread_Params*    _params;
 	CRITICAL_SECTION 	_cs;
-	int                 _state;
+	int                 _state, _old_state;
 	std::string         _url, _user, _pass;
 	DWORD               _tCycleMs, _tLastRW;
 	CyclicNode          _wr, _rd;
@@ -100,6 +106,8 @@ private:
 	UA_StatusCode writeExtensionObjectValue(const UA_NodeId nodeId, const UA_NodeId& dataTypeNodeId, const UA_ByteString *newValue);
 	UA_StatusCode initCyclicInfo(TOpcUA_IOThread::CyclicNode& cycNode);
 	UA_StatusCode readwriteCyclic();
+	UA_StatusCode readStructureDefinition(UA_NodeId& nidNodeId, const std::string& Name, he::Symbols::TypeNode& sym, int offset = 0, int level = 0);
+	UA_StatusCode readNodeNames(UA_NodeId& nidNodeId, String& nameBrowse, String& nameDisplay);
 	UA_ClientConfig 	_origUserConfig;
 	static void clientStateChangeTrampoline(
 		UA_Client* client,

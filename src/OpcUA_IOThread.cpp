@@ -3,7 +3,7 @@
 #include <System.hpp>
 #pragma hdrstop
 
-#include "IOThread.h"
+#include "OpcUA_IOThread.h"
 #include "logger.h"
 #include "read_file.h"
 #pragma package(smart_init)
@@ -22,6 +22,8 @@
 //      }
 //---------------------------------------------------------------------------
 extern bool gDllUnloadInProgress;
+
+using namespace he::Symbols;
 
 __fastcall TOpcUA_IOThread::TOpcUA_IOThread(IOThread_Params* params)
 	: TThread(true), _params(params), _client(NULL), _state(0), _oldConnectStatus(0) // always create suspended
@@ -59,6 +61,8 @@ void TOpcUA_IOThread::InitClientConfig()
 	cc->clientContext = this;
 	cc->stateCallback = &TOpcUA_IOThread::clientStateChangeTrampoline;
 	//cc->subscriptionInactivityCallback = &UA_Client_Proxy::subscriptionInactivityCallback;
+
+	XTRACE(XPDIAG2, "%s: Client config initialized.", _url.c_str());
 }
 void TOpcUA_IOThread::GetClientState(
 	UA_SecureChannelState* chn_s, UA_SessionState* ss_s, UA_StatusCode* sc)
@@ -131,7 +135,10 @@ void TOpcUA_IOThread::StateMachine()
 		UA_StatusCode connectStatus = UA_Client_run_iterate(_client, 100/*ms*/);
 	}
 
-	int old_state = _state;
+	if (_old_state != _state) {
+		XTRACE(XPDIAG2, "%s: State change --> %d (lasterr=%08Xh)", _url.c_str(), _state, _lasterr);
+		_old_state = _state;
+	}
 	switch(_state) {
 	case 0:  // Idle. Wait until we are initialized.
 		break;
@@ -180,11 +187,29 @@ void TOpcUA_IOThread::StateMachine()
 			break;
 		}
 		_connectRetries = 0;
-		_state = 30;
+		_state = 21;
 //		// init write value
 		_varWr = *(UA_ByteString*)_wr.varInitVal.data;
+//      // init read value
+		_varRd = *(UA_ByteString*)_rd.varInitVal.data;
 		_stats.tLastConnected = Now();
 		_statsTicker = GetTickCount();
+		break;
+
+	case 21:
+		XTRACE(XPDIAG2, "%s: Types resolved, try first read/write cycle...", _url.c_str());
+		_lasterr = readwriteCyclic();
+		if (UA_STATUSCODE_GOOD != _lasterr) {
+			// Read/write failed. Disconnect and reconnect...
+			XTRACE(XPERRORS, "%s: Error reading/writing: %08Xh (%s)", _url.c_str(), _lasterr, UA_StatusCode_name(_lasterr));
+			_state = 99;
+			break;
+		}
+		_connectRetries = 0;
+		_state = 30;
+		_stats.tLastConnected = Now();
+		_statsTicker = GetTickCount();
+		XTRACE(XPDIAG2, "%s: First cycle succeeded, starting cyclic I/O...", _url.c_str());
 		break;
 
 	case 30: {
@@ -229,7 +254,8 @@ void TOpcUA_IOThread::StateMachine()
 //		while (GetTickCount() - _tLastRW < (_tCycleMs - 5))
 		do
 		{
-			int tDelta = tEndTime - GetTickCount();
+			DWORD t = GetTickCount();
+			int tDelta = tEndTime - t;
 			if (tDelta > 10) tDelta = 10;
 			if (tDelta < 0) tDelta = 0;
 			UA_StatusCode connectStatus = UA_Client_run_iterate(_client, tDelta);
@@ -244,6 +270,9 @@ void TOpcUA_IOThread::StateMachine()
 				_state = 99;
 				break;
 			}
+			DWORD d = GetTickCount()- t;
+			if (tDelta && (d < tDelta))
+				Sleep(tDelta-d);
 		}
 		while (GetTickCount() <= tEndTime);
 /*
@@ -329,6 +358,7 @@ void TOpcUA_IOThread::StateMachine()
 			_state = 1;
 			XTRACE(XPDIAG1, "%s: Recreating client and reconnecting...", _url.c_str());
 		}
+        Sleep(10);
 		break;
 
 	case 999:
@@ -342,10 +372,6 @@ void TOpcUA_IOThread::StateMachine()
 		break;
 */
 	}
-	if (old_state != _state) {
-		XTRACE(XPDIAG2, "%s: State change --> %d (lasterr=%08Xh)", _url.c_str(), _state, _lasterr);
-	}
-
 }
 //---------------------------------------------------------------------------
 bool TOpcUA_IOThread::IsCyclicIoRunning()
@@ -363,7 +389,7 @@ UA_StatusCode TOpcUA_IOThread::SetOutputs(const UA_ByteString *newValue)
 	EnterCriticalSection(&_cs);
 	if (_varWr.data != NULL) {
 		UA_ByteString_clear(&_varWr);
-    }
+	}
 	UA_ByteString_copy(newValue, &_varWr);
 	LeaveCriticalSection(&_cs);
 	return _wrStatus;               // return the last write status
@@ -378,6 +404,30 @@ UA_StatusCode TOpcUA_IOThread::GetInputs(UA_ByteString *newValue)
 	UA_ByteString_copy(&_varRd, newValue);
 	LeaveCriticalSection(&_cs);
 	return _rdStatus;               // return the last read status
+}
+// NOTE: the returned value is a copy and *MUST be deallocated!
+// i.e.
+// - call UA_ByteString_init(newValue) *BEFORE* calling this function
+// - call UA_ByteString_clear(newValue) *AFTER* calling this function
+UA_StatusCode TOpcUA_IOThread::GetOutputs(UA_ByteString *newValue)
+{
+	EnterCriticalSection(&_cs);
+	UA_ByteString_copy(&_varWr, newValue);
+	LeaveCriticalSection(&_cs);
+	return _wrStatus;               // return the last write status
+}
+//---------------------------------------------------------------------------
+// NOTE: the returned value is a copy and *MUST be deallocated!
+// i.e.
+// - call UA_ByteString_init(newValue) *BEFORE* calling this function
+// - call UA_ByteString_clear(newValue) *AFTER* calling this function
+const he::Symbols::TypeNode& TOpcUA_IOThread::GetSymDefRd()
+{
+	return _rd.SymbolDef;
+}
+const he::Symbols::TypeNode& TOpcUA_IOThread::GetSymDefWr()
+{
+	return _wr.SymbolDef;
 }
 //---------------------------------------------------------------------------
 UA_StatusCode TOpcUA_IOThread::readwriteCyclic()
@@ -563,12 +613,247 @@ UA_StatusCode TOpcUA_IOThread::writeExtensionObjectValue(const UA_NodeId nodeId,
 	return retval;
 }
 
+UA_StatusCode TOpcUA_IOThread::readNodeNames(UA_NodeId& nidNodeId, String& nameBrowse, String& nameDisplay)
+{
+	UA_StatusCode retval;
+
+	UA_QualifiedName qn;
+	UA_QualifiedName_init(&qn);
+
+	retval = UA_Client_readBrowseNameAttribute(_client, nidNodeId, &qn);
+	return retval;
+}
+
+static UTF8String str(const UA_String& name)
+{
+	UTF8String tmp((const char*)name.data, name.length);
+	return tmp;
+}
+
+// Read the structure definition of the given data type
+// Create a generic data type definition from the OPC-UA specific structure definition,
+// so we can later serialize/deserialize (and create/read/update a LUA table)
+UA_StatusCode TOpcUA_IOThread::readStructureDefinition(UA_NodeId& nidNodeId, const std::string& Name, he::Symbols::TypeNode& sym, int offset, int level)
+{
+	uint8_t buf[8192];
+	UA_StatusCode retval = __UA_Client_readAttribute(_client, &nidNodeId,
+		UA_ATTRIBUTEID_DATATYPEDEFINITION, buf, &UA_TYPES[UA_TYPES_STRUCTUREDEFINITION]);
+	if (0 == retval) {
+		// got the data definition!
+		he::Symbols::TypeInfo ts;
+		UA_StructureDefinition *def = (UA_StructureDefinition*)buf;
+		AnsiString StructType = "(unknown!)";
+		switch(def->structureType){
+		case UA_STRUCTURETYPE_STRUCTURE:
+			ts.DataType.isArray = 0;
+			ts.DataType.isStruct = 1;
+			ts.DataType.type = he::Symbols::TypeInfo::Type::S_StructFixed;
+			ts.Offset = 0;
+			StructType = "structure";
+			break;
+		// See OPCUA-Specs https://reference.opcfoundation.org/Core/Part6/v104/docs/5.2.7
+		// Max. 32 optional fields are allowed for a structure (single DWORD with bitfield)!
+		case UA_STRUCTURETYPE_STRUCTUREWITHOPTIONALFIELDS:
+			ts.DataType.isArray = 0;
+			ts.DataType.isStruct = 1;
+			ts.DataType.type = he::Symbols::TypeInfo::Type::S_StructOptFld;
+			ts.Offset = 4;
+			ts.Flags.Bits.hasOffset = 1;
+			StructType = "struct with optional fields";
+			break;
+		case UA_STRUCTURETYPE_UNION: StructType = "(unsupported!)"; break;
+		}
+		ts.ItemType = (char*)def->defaultEncodingId.identifier.string.data;
+		ts.ItemName = Name;
+		XTRACE(XPDIAG2, "%04d: %*s[%d] Struct: Type=%d (%s), Fields=%d Name=%s", offset, level*4, " ", level,
+			def->structureType, StructType.c_str(), def->fieldsSize, def->defaultEncodingId.identifier.string.data);
+		offset += ts.Offset;
+		sym.Set(NULL, ts);
+		for (int i = 0; i < def->fieldsSize; i++) {
+			UA_StructureField *pFld = &def->fields[i];
+			he::Symbols::TypeInfo ti;
+			if (pFld->valueRank != -1) {
+				ti.DataType.isArray = 1;
+				ti.ValueRank = pFld->valueRank;
+			}
+			// Get the names...
+			// nameNative, nameBrowse, nameDisplay
+			//readNodeNames(nidNodeId, ti.nameBrowse, ti.nameDisplay);
+
+			bool fRecurse = false;
+			if (pFld->dataType.namespaceIndex == 0 && pFld->dataType.identifierType == UA_NODEIDTYPE_NUMERIC) {
+				ti.ItemName = str(pFld->name);
+				/**
+				 * Namespace Zero NodeIds
+				 * ----------------------
+				 * Numeric identifiers of standard-defined nodes in namespace zero. The
+				 * following definitions are autogenerated from the ``/home/travis/build/open62541/open62541/tools/schema/NodeIds.csv`` file */
+				ti.DataType.isStruct = 0;
+				switch (pFld->dataType.identifier.numeric) {
+				case UA_NS0ID_BOOLEAN: 	  ti.Set(TypeInfo::Type::T_Bool8, 		str(pFld->name), "Boolean"); break;
+				case UA_NS0ID_SBYTE: 	  ti.Set(TypeInfo::Type::T_SInt8, 		str(pFld->name), "SByte"); break;
+				case UA_NS0ID_BYTE: 	  ti.Set(TypeInfo::Type::T_UInt8, 		str(pFld->name), "Byte"); break;
+				case UA_NS0ID_INT16: 	  ti.Set(TypeInfo::Type::T_SInt16, 		str(pFld->name), "Int16"); break;
+				case UA_NS0ID_UINT16: 	  ti.Set(TypeInfo::Type::T_UInt16, 		str(pFld->name), "UInt16"); break;
+				case UA_NS0ID_INT32: 	  ti.Set(TypeInfo::Type::T_SInt32, 		str(pFld->name), "Int32"); break;
+				case UA_NS0ID_UINT32: 	  ti.Set(TypeInfo::Type::T_UInt32, 		str(pFld->name), "UInt32"); break;
+				case UA_NS0ID_INT64: 	  ti.Set(TypeInfo::Type::T_SInt64, 		str(pFld->name), "Int64"); break;
+				case UA_NS0ID_UINT64: 	  ti.Set(TypeInfo::Type::T_UInt64, 		str(pFld->name), "UInt64"); break;
+				case UA_NS0ID_FLOAT: 	  ti.Set(TypeInfo::Type::T_Float, 		str(pFld->name), "Float"); break;
+				case UA_NS0ID_DOUBLE: 	  ti.Set(TypeInfo::Type::T_Double, 		str(pFld->name), "Double"); break;
+				case UA_NS0ID_STRING: 	  ti.Set(TypeInfo::Type::T_StringL4, 	str(pFld->name), "String"); break;
+				case UA_NS0ID_DATETIME:   ti.Set(TypeInfo::Type::T_DateTime, 	str(pFld->name), "DateTime"); break;
+				case UA_NS0ID_GUID: 	  ti.Set(TypeInfo::Type::T_Guid, 		str(pFld->name), "GUID"); break;
+				case UA_NS0ID_BYTESTRING: ti.Set(TypeInfo::Type::T_ByteString, 	str(pFld->name), "BYTESTRING"); break;
+				//case UA_NS0ID_XMLELEMENT: ts.ItemType = "XMLELEMENT"; ts.DataType = he::Symbols::TypeInfo::Type::T_Bool; break;
+				// and more...
+				default:
+					XTRACE(XPERRORS, "%04d: %*s    (%d) Type=%d, Opt=%d, Rank=%d, Name=%s: Unknown datatype!",
+						offset, level*4, " ", i,
+						pFld->dataType.identifier.numeric, pFld->isOptional?1:0, pFld->valueRank,
+						str(pFld->name).c_str());
+					return -1;      // ERROR!
+				}
+				XTRACE(XPDIAG2, "%04d: %*s    (%d) Type=%d, Opt=%d, Rank=%d, Name=%s (%s)",
+					offset, level*4, " ", i,
+					pFld->dataType.identifier.numeric, pFld->isOptional?1:0, pFld->valueRank,
+					str(pFld->name).c_str(), AnsiString(ti.ItemType).c_str());
+				offset = offset + ti.Offset;
+				sym.AddChild(NULL, ti, offset);
+			}
+			else if (pFld->dataType.namespaceIndex == 3 && pFld->dataType.identifierType == UA_NODEIDTYPE_NUMERIC) {
+				ti.ItemName = str(pFld->name);
+				/**
+				 * Siemens custom NodeIds
+				 * ----------------------
+				 * Numeric identifiers for Siemens - this is a "hack", Siemens uses non-standard
+				 * See: https://www.industry-mobile-support.siemens-info.com/de/article/detail/109780313
+				 */
+				ti.DataType.isStruct = 0;
+				switch (pFld->dataType.identifier.numeric) {
+				case 3001: 	  ti.Set(TypeInfo::Type::T_UInt8, 		str(pFld->name), "BYTE"); break;
+				case 3002: 	  ti.Set(TypeInfo::Type::T_UInt16, 		str(pFld->name), "WORD"); break;
+				case 3003: 	  ti.Set(TypeInfo::Type::T_UInt32, 		str(pFld->name), "DWORD"); break;
+				case 3004: 	  ti.Set(TypeInfo::Type::T_UInt64, 		str(pFld->name), "LWORD"); break;
+				//case 3011: 	  ti.Set(TypeInfo::Type::T_DateTime,	str(pFld->name), "DT"); break;
+				//case 3012: 	  ti.Set(TypeInfo::Type::T_Char, 		str(pFld->name), "CHAR"); break;
+				//case 3013: 	  ti.Set(TypeInfo::Type::T_WChar, 		str(pFld->name), "WCHAR"); break;
+				case 3014: 	  ti.Set(TypeInfo::Type::T_StringL4, 	str(pFld->name), "STRING"); break;
+				// and more...
+				default:
+					XTRACE(XPERRORS, "%04d: %*s    (%d) Type=%d, Opt=%d, Rank=%d, Name=%s: Unknown Siemens datatype!",
+						offset, level*4, " ", i,
+						pFld->dataType.identifier.numeric, pFld->isOptional?1:0, pFld->valueRank,
+						str(pFld->name).c_str());
+					return -1;      // ERROR!
+				}
+				XTRACE(XPDIAG2, "%04d: %*s    (%d) Type=%d, Opt=%d, Rank=%d, Name=%s (Siemens \"%s\")",
+					offset, level*4, " ", i,
+					pFld->dataType.identifier.numeric, pFld->isOptional?1:0, pFld->valueRank,
+					str(pFld->name).c_str(), AnsiString(ti.ItemType).c_str());
+				offset = offset + ti.Offset;
+				sym.AddChild(NULL, ti, offset);
+			}
+			else if (pFld->dataType.identifierType == UA_NODEIDTYPE_STRING) {
+				//const UA_String& string = pFld->dataType.identifier.string;
+				// struct inside the struct, so recurse...
+				ti.ItemName = str(pFld->name);        // eigentlich redundat, dann können wir aber leichter testen
+				he::Symbols::TypeNode& sub = sym.AddChild(NULL, ti, offset);
+				retval = readStructureDefinition(pFld->dataType, str(pFld->name).c_str(), sub, offset, level + 1);
+				if (retval != 0) {
+					return retval;
+				}
+			}
+			else {
+				XTRACE(XPERRORS, "%04d: %*s    (%d) Type=%d, Name=%s: Unknown identifier type %d!",
+					offset, level*4, " ", i,
+					pFld->dataType.identifier.numeric, str(pFld->name).c_str(), pFld->dataType.identifierType);
+				return -1;      // ERROR!
+			}
+		}
+	}
+	//UA_NodeId_clear(&nidTmp);
+
+	return retval;
+}
+/*
+int dump(const he::Symbols::TypeNode& sym, const uint8_t* pBuf, int offset = 0, int level = 0)
+{
+	const he::Symbols::TypeInfo& ts = sym.item;
+	XTRACE(XPDIAG1, "%04d: %*s[%d] Struct %s (%s)", offset, level*4, " ", level,
+		AnsiString(ts.ItemName).c_str(), AnsiString(ts.ItemType).c_str());
+	// we don't support optional elements at the moment, so simply skip header!
+	offset = offset + ts.Offset;
+	const uint8_t* pBegin = pBuf;
+	pBuf = pBuf + offset;
+	for (int i = 0; i < sym.children.size(); i++) {
+		const he::Symbols::TypeNode& tn = sym.children[i];
+		const he::Symbols::TypeInfo& ti = tn.item;
+		int iCount = 1;
+		if (ti.DataType.isArray) {
+			iCount = *((uint32_t*)pBuf);
+			offset += 4;
+			pBuf += 4;
+			XTRACE(XPDIAG1, "%04d: %*s    (%d) %s(%d) Name=%s Array[%d] ",
+				offset, level*4, " ", i,
+				AnsiString(ti.ItemType).c_str(), (uint32_t)ti.DataType.type,
+				AnsiString(ti.ItemName).c_str(), iCount);
+		}
+		for (int iSeq = 0; iSeq < iCount; iSeq++) {
+			if (ti.DataType.isStruct)
+			{
+				// Struct field?
+				int l = dump(tn, pBegin, offset, level+1);
+				offset = l;
+				pBuf = pBegin + offset;
+			}
+			else {
+				// Plain field
+				AnsiString sVal;
+				int iLen = 0;
+				switch(ti.DataType.type) {
+				case he::Symbols::TypeInfo::Type::T_Bool8: iLen = 1; sVal.printf("%s", *pBuf?"true":"false"); break;
+				case he::Symbols::TypeInfo::Type::T_UInt8: iLen = 1; sVal.printf("%02Xh", *pBuf); break;
+				case he::Symbols::TypeInfo::Type::T_SInt8: iLen = 1; sVal.printf("%02Xh", *pBuf); break;
+				case he::Symbols::TypeInfo::Type::T_UInt16: iLen = 2; sVal.printf("%04Xh", *((uint16_t*)pBuf)); break;
+				case he::Symbols::TypeInfo::Type::T_SInt16: iLen = 2; sVal.printf("%04Xh", *((uint16_t*)pBuf)); break;
+				case he::Symbols::TypeInfo::Type::T_UInt32: iLen = 4; sVal.printf("%08Xh", *((uint32_t*)pBuf)); break;
+				case he::Symbols::TypeInfo::Type::T_SInt32: iLen = 4; sVal.printf("%08Xh", *((uint32_t*)pBuf)); break;
+				case he::Symbols::TypeInfo::Type::T_UInt64: iLen = 8; sVal = "u64"; break;
+				case he::Symbols::TypeInfo::Type::T_SInt64: iLen = 8; sVal = "s64"; break;
+				case he::Symbols::TypeInfo::Type::T_Float: iLen = 4; sVal.printf("%f", *((float*)pBuf)); break;
+				case he::Symbols::TypeInfo::Type::T_Double: iLen = 8; sVal.printf("%lf", *((double*)pBuf)); break;
+				case he::Symbols::TypeInfo::Type::T_StringL4: iLen = *((uint32_t*)pBuf); sVal = AnsiString((char*)&pBuf[4], iLen); iLen += 4; break;
+				case he::Symbols::TypeInfo::Type::T_StringFix: iLen = *((uint32_t*)pBuf); sVal = AnsiString((char*)&pBuf[4], iLen); iLen += 4; break;
+				case he::Symbols::TypeInfo::Type::T_DateTime:
+				case he::Symbols::TypeInfo::Type::T_Guid:
+				case he::Symbols::TypeInfo::Type::T_ByteString:
+					break;
+				}
+				if (!ti.DataType.isArray) {
+					XTRACE(XPDIAG1, "%04d: %*s    (%d) %s(%d) len=%d, Name=%s Val=%s",
+						offset, level*4, " ", i,
+						AnsiString(ti.ItemType).c_str(), (uint32_t)ti.DataType.type,
+						iLen, AnsiString(ti.ItemName).c_str(), sVal.c_str());
+				} else {
+					XTRACE(XPDIAG1, "%04d: %*s        [%d] Val=%s",
+						offset, level*4, " ", iSeq, sVal.c_str());
+				}
+				offset = offset + iLen;
+				pBuf = pBuf + iLen;
+			}
+		}
+	}
+	return offset;
+}
+*/
 
 // Do the initial transactions to get all information we need after connecting
 UA_StatusCode TOpcUA_IOThread::initCyclicInfo(TOpcUA_IOThread::CyclicNode& cycNode)
 {
 	//UA_NodeClass outNodeClass;
 	UA_NodeId nodeId;
+    he::Symbols::TypeNode SymbolDef;
 
 	// Clear everything to prevent memory leaks for multiple calls.
 	UA_NodeId_clear(&cycNode.nidNodeId);
@@ -576,6 +861,7 @@ UA_StatusCode TOpcUA_IOThread::initCyclicInfo(TOpcUA_IOThread::CyclicNode& cycNo
 	UA_NodeId_clear(&cycNode.nidEncoding);
 	UA_NodeClass_clear(&cycNode.nidNodeClass);
 //	UA_Variant_clear(&cycNode.varInitVal);
+	cycNode.InitialReadLength = 0;
 
 	// (try) to resolve the node name [string] into a node id [numeric]
 	nodeId = UA_NODEID_STRING_ALLOC(cycNode.Namespace, cycNode.Name.c_str());
@@ -597,11 +883,29 @@ UA_StatusCode TOpcUA_IOThread::initCyclicInfo(TOpcUA_IOThread::CyclicNode& cycNo
 				retval = readExtensionObjectValue(cycNode.nidNodeId, &cycNode.varInitVal, &cycNode.ExpandedNodeId);
 				if (UA_STATUSCODE_GOOD == retval) {
 					int bytes = ((UA_ByteString*)cycNode.varInitVal.data)->length;
+					cycNode.InitialReadLength = bytes;
 					XTRACE(XPDIAG1, "    NodeClass resolved, inital value read, structure size=%d bytes, IdentifierType=%d", bytes, cycNode.ExpandedNodeId.identifierType);
 					UA_String idStr = UA_STRING_NULL;
 					UA_NodeId_print(&cycNode.ExpandedNodeId, &idStr);
 					XTRACE(XPDIAG1, "    -> Identifier: '%s'", idStr.data);
 					UA_String_clear(&idStr);
+
+					// Read the data type definition...
+					XTRACE(XPDIAG1, "    Trying to read structure definition...");
+					UA_StatusCode rv = readStructureDefinition(cycNode.nidDataType, cycNode.Name.c_str(), SymbolDef);
+					if (rv != UA_STATUSCODE_GOOD) {
+						// TODO: what happens, if there is an error?
+						XTRACE(XPERRORS, "    Error reading structure definition! Cannot use automatic type mapping!");
+					}
+					else {
+                        // Only add the symbol definition if we succeeded decoding!
+						cycNode.SymbolDef = SymbolDef;
+                    }
+
+					// dump all
+					//XTRACE(XPDIAG1, "Dumping data...");
+					//uint8_t* init_data = ((UA_ByteString*)cycNode.varInitVal.data)->data;
+					//dump(cycNode.SymbolDef, init_data);
 				}
 				else {
 					XTRACE(XPERRORS, "%s: Failed to read ExtensionObjectValue for '%s'", _url.c_str(), cycNode.Name.c_str());
@@ -642,6 +946,10 @@ UA_StatusCode TOpcUA_IOThread::initCyclicInfo(TOpcUA_IOThread::CyclicNode& cycNo
 	if (UA_STATUSCODE_GOOD == retval) {
 		XTRACE(XPDIAG1, "    Success, fully resolved '%s'", cycNode.Name.c_str());
 	} else {
+		// TODO: read NS=0,ID=2262 (ProductURI)  --> UA_NS0ID_SERVER_SERVERSTATUS_BUILDINFO_PRODUCTURI
+		// Check, if the value is == "urn:Rexroth:ctrlX:AUTOMATION:Server" and
+		// throw a warning, that the server might need a restart!!!
+
 		XTRACE(XPERRORS, "%s: Error resolving '%s': Retcode=%d (%08Xh), Msg=%s", _url.c_str(), cycNode.Name.c_str(), retval, retval, UA_StatusCode_name(retval));
 	}
 

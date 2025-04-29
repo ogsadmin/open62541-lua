@@ -16,6 +16,13 @@
 #pragma link "libssl-1_1.lib"
 #endif
 
+static int lua_test(lua_State *L)
+{
+	const char *s = lua_tostring(L, 1);
+	lua_pushstring(L, s);
+	return 1;
+}
+
 namespace lua_opcua {
 	void reg_opcua_enums(sol::table& module);
 	void reg_opcua_types(sol::table& module);
@@ -46,10 +53,16 @@ namespace lua_opcua {
 		 */
 		module["VERSION"] = OPCUA_VERSION;
 
+//		int ref = module.registry_index();
+//		lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+//		lua_pushcfunction(L, lua_test); 	// Push the C function onto the stack
+//		lua_setfield(L, -2, "lua_test"); 	// Set the function in the table with key
+
 		return module;
 	}
 }
 
 extern "C" int luaopen_opcua(lua_State *L) {
-	return sol::stack::call_lua(L, 1, lua_opcua::open_opcua);
+	int ret = sol::stack::call_lua(L, 1, lua_opcua::open_opcua);
+	return ret;
 }

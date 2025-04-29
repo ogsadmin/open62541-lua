@@ -11,8 +11,8 @@
 #include "opcua_interfaces.hpp"
 #include "module_node.hpp"
 //#include "certificates.h"
-#include "IOThread.h"
-
+#include "OpcUA_IOThread.h"
+#include <Serializer.h>
 #include <logger.h>
 extern tXTRACE_Driver gXTRACE_Driver;
 
@@ -35,7 +35,7 @@ void UA_Log_XTrace_log(void *context, UA_LogLevel level, UA_LogCategory category
 	case UA_LOGLEVEL_ERROR:     xlvl = _XPERRORS; break;
 	case UA_LOGLEVEL_FATAL:     xlvl = _XPFATAL; break;
 	}
-	gXTRACE_Driver.onLogEvent(GetModuleHandle(NULL), xlvl, category, "UA_LOG", 0, msg, args);
+	gXTRACE_Driver.onLogEvent(GetModuleHandle(NULL), xlvl, category, "OpcUA", 0, msg, args);
 }
 
 void UA_Log_XTrace_clear(void *context)
@@ -1008,7 +1008,7 @@ public:
 
 	// returns bytestring, state or nil, state
 	//
-	sol::variadic_results getInputs(sol::this_state L) {
+	sol::variadic_results getInputsRaw(sol::this_state L) {
 
 		sol::variadic_results result;
 
@@ -1023,13 +1023,205 @@ public:
 
 	// returns last write state
 	//
-	uint32_t setOutputs(std::string newValue, sol::this_state L) {
+	uint32_t setOutputsRaw(std::string newValue, sol::this_state L) {
 		UA_ByteString bs;
 		UA_ByteString_init(&bs);
 		bs.data = (UA_Byte*)newValue.c_str();
 		bs.length = newValue.length();
 		UA_StatusCode retval = _ioThread->SetOutputs(&bs);
 		return retval;
+	}
+
+	// returns table, bytestring, state or nil, nil, state
+	//
+	sol::variadic_results getInputs(sol::this_state L) {
+
+		sol::variadic_results result;
+
+		UA_ByteString bs;
+		UA_ByteString_init(&bs);
+		UA_StatusCode retval = _ioThread->GetInputs(&bs);
+		const he::Symbols::TypeNode& symDef = _ioThread->GetSymDefRd();
+		if (symDef.item.isValid) {
+			if (retval == UA_STATUSCODE_GOOD && _ioThread->IsCyclicIoRunning() && bs.data /*&& symDef.item.isValid()*/) {
+	//			// dump again? first the data structure definition, then the data
+	//			he::lua::Serializer::Dump(symDef);
+				// deserialize the results into a new table at TOS
+				he::lua::Serializer::Deserialize(L, symDef, bs.data, bs.length);
+				// wrap the native LUA table in a sol::table to return it through the variadic_result vector
+				sol::table table(L, -1);
+				result.push_back(table);
+				lua_pop(L,1);                       // remove the table created earlier from the LUA stack
+			}
+			else {
+				result.push_back({ L, sol::lua_nil });
+			}
+		}
+		else {
+			// fallback to raw I/O only
+			result.push_back({ L, sol::lua_nil });
+		}
+		result.push_back({ L, sol::in_place_type<std::string>, std::string((const char*)bs.data, bs.length)});
+		result.push_back({ L, sol::in_place_type<uint32_t>, retval});
+
+		UA_ByteString_clear(&bs);
+		return result;
+	}
+	// returns table, bytestring, state or nil, nil, state
+	//
+	sol::variadic_results getOutputs(sol::this_state L) {
+
+		sol::variadic_results result;
+
+		UA_ByteString bs;
+		UA_ByteString_init(&bs);
+		UA_StatusCode retval = _ioThread->GetOutputs(&bs);
+		const he::Symbols::TypeNode& symDef = _ioThread->GetSymDefWr();
+		if (symDef.item.isValid) {
+			if (retval == UA_STATUSCODE_GOOD && _ioThread->IsCyclicIoRunning() && bs.data /*&& symDef.item.isValid()*/) {
+				// deserialize the results into a new table at TOS
+				he::lua::Serializer::Deserialize(L, symDef, bs.data, bs.length);
+				// wrap the native LUA table in a sol::table to return it through the variadic_result vector
+				sol::table table(L, -1);
+				result.push_back(table);
+				lua_pop(L,1);                       // remove the table created earlier from the LUA stack
+			}
+			else {
+				result.push_back({ L, sol::lua_nil });
+			}
+		}
+		else {
+			// fallback to raw I/O only
+			result.push_back({ L, sol::lua_nil });
+		}
+
+		result.push_back({ L, sol::in_place_type<std::string>, std::string((const char*)bs.data, bs.length)});
+		result.push_back({ L, sol::in_place_type<uint32_t>, retval});
+
+		UA_ByteString_clear(&bs);
+		return result;
+	}
+
+	// Get input variable type definition
+	// Returns <table> or nil,errormessage
+	sol::variadic_results getInputsType(sol::this_state L) {
+
+		sol::variadic_results result;
+		const he::Symbols::TypeNode& symDef = _ioThread->GetSymDefRd();
+		return getType(L, symDef);
+	}
+	// Get output variable type definition
+	// Returns <table> or nil,errormessage
+	sol::variadic_results getOutputsType(sol::this_state L) {
+
+		sol::variadic_results result;
+		const he::Symbols::TypeNode& symDef = _ioThread->GetSymDefWr();
+		return getType(L, symDef);
+	}
+
+	// Get an internal type definition as lua table
+	// Returns <table> or nil,errormessage
+	sol::variadic_results getType(sol::this_state L, const he::Symbols::TypeNode& symDef)
+	{
+		sol::variadic_results result;
+		if (!symDef.item.isValid()) {
+			// We don't have a valid symbol definition (likely the PLC uses some unknown
+			// data types), so this function cannot be used.
+            // Use raw I/O instead!
+			result.push_back({ L, sol::lua_nil });
+			result.push_back({ L, sol::in_place, "Symbol definition is not valid!" });
+			return result;
+		}
+
+		// deserialize the results into a new table at TOS
+		int ret = he::lua::Serializer::GetTypeDef(L, symDef);
+		if (ret != 1) {
+			// some error occurred
+			result.push_back({ L, sol::lua_nil });
+			result.push_back({ L, sol::in_place, "Failed to decode type definition!" });
+		}
+		else {
+			// we have the table on TOS
+			// wrap the native LUA table in a sol::table to return it through the variadic_result vector
+			sol::table table(L, -1);
+			result.push_back(table);
+			lua_pop(L,1);                       // remove the table created earlier from the LUA stack
+		}
+		return result;
+	}
+
+	/*
+	// test howto pack a native lua table as variadic_result
+	sol::variadic_results getInfo(sol::this_state L) {
+
+		sol::variadic_results result;
+
+		lua_createtable(L, 0, 0);
+		lua_pushstring(L, "key"); 			// Push the C function onto the stack
+		lua_setfield(L, -2, "lua_test"); 	// Set the function in the table with key
+
+		// wrap the native LUA table in a sol::table to return it through the variadic_result vector
+		sol::table table(L, -1);
+		result.push_back(table);
+
+		lua_pop(L,1);                       // remove the table created earlier from the LUA stack
+
+		return result;
+	}
+*/
+
+	// returns last write state or nil, error
+	//
+	sol::variadic_results setOutputs(sol::table newValue /*sol::variadic_args va*/, sol::this_state L)
+	{
+		sol::variadic_results result;
+
+		// encode from lua structure
+		const he::Symbols::TypeNode& symDef = _ioThread->GetSymDefWr();
+		if (!symDef.item.isValid()) {
+			// We don't have a valid symbol definition (likely the PLC uses some unknown
+			// data types), so this function cannot be used.
+			// Use raw I/O instead!
+			result.push_back({ L, sol::lua_nil });
+			result.push_back({ L, sol::in_place, "Symbol definition is not valid, cannot serialize. Use raw I/O functions to exchange data instead!" });
+			return result;
+		}
+
+		// get the table on the TOS
+		int  ref = newValue.registry_index();
+		lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+
+		// serialize the table at TOS into a binary data stream
+		UA_ByteString bs;
+		UA_ByteString_init(&bs);
+		bs.data = new UA_Byte[8192];
+		bs.length = 8192;
+		bs.length = he::lua::Serializer::Serialize(L, symDef, bs.data, bs.length);
+
+		lua_pop(L, 1);
+/*
+		UA_ByteString bs;
+		UA_ByteString_init(&bs);
+		bs.data = (UA_Byte*)newValue.c_str();
+		bs.length = newValue.length();
+
+		UA_StatusCode retval = _ioThread->SetOutputs(&bs);
+		return retval;
+*/
+		if (bs.length == 0) {
+			// This is *NOT* normal - most likely the symDef is not available, as
+			// the PLC uses some unknown data types...
+			delete[] bs.data;
+			// return an error.
+			result.push_back({ L, sol::lua_nil });
+			result.push_back({ L, sol::in_place, "Failed to serialize, possibly data or data type definition is invalid!" });
+			return result;
+		}
+
+		UA_StatusCode retval = _ioThread->SetOutputs(&bs);
+		delete[] bs.data;
+		result.push_back({ L, sol::in_place_type<int>, retval });
+		return result;
 	}
 
 	void start(const char* endpoint_url,
@@ -1166,9 +1358,15 @@ void reg_opcua_client(sol::table& module) {
 		sol::constructors<UA_Client_CyclicIO(), UA_Client_CyclicIO(UA_MessageSecurityMode, const std::string&, const std::string&)>(),
 		"config", &UA_Client_CyclicIO::_config,
 		//"getState", &UA_Client_CyclicIO::getState,
-        "getState", &UA_Client_CyclicIO::getState,  // returns true, if cyclic io is running
-		"getInputs", &UA_Client_CyclicIO::getInputs,  // returns <bytestring>,<last read status>
-		"setOutputs", &UA_Client_CyclicIO::setOutputs,
+		"getState", &UA_Client_CyclicIO::getState,  // returns true, if cyclic io is running
+		"getInputsTbl", &UA_Client_CyclicIO::getInputs,  // returns <bytestring>,<last read status>
+		"getInputsType", &UA_Client_CyclicIO::getInputsType,
+		"setOutputsTbl", &UA_Client_CyclicIO::setOutputs,
+		"getOutputsTbl", &UA_Client_CyclicIO::getOutputs,
+		"getOutputsType", &UA_Client_CyclicIO::getOutputsType,
+		"getInputs", &UA_Client_CyclicIO::getInputsRaw,  // returns <bytestring>,<last read status>
+		"setOutputs", &UA_Client_CyclicIO::setOutputsRaw,
+		// "getInfo", &UA_Client_CyclicIO::getInfo,     // test howto pack a plain lua table as variadic_result
 		"start", &UA_Client_CyclicIO::start
 //		"updateIO", &UA_Client_CyclicIO::updateIO
 	);

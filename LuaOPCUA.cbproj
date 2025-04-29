@@ -64,7 +64,7 @@
         <Defines>UA_ENABLE_ENCRYPTION_OPENSSL;UA_ENABLE_ENCRYPTION;LUA_BUILD_AS_DLL;$(Defines)</Defines>
         <VerInfo_Locale>1031</VerInfo_Locale>
         <VerInfo_Keys>CompanyName=;FileDescription=$(MSBuildProjectName);FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProgramID=com.embarcadero.$(MSBuildProjectName);ProductName=$(MSBuildProjectName);ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
-        <AllPackageLibs>rtl.lib</AllPackageLibs>
+        <AllPackageLibs>rtl.lib;vclwinx.lib;vclimg.lib;vcl.lib;bindengine.lib;xmlrtl.lib;vclactnband.lib;vclx.lib</AllPackageLibs>
         <BCC_EnableBatchCompilation>true</BCC_EnableBatchCompilation>
         <RunBCCOutOfProcess>true</RunBCCOutOfProcess>
         <SubProcessesNumber>4</SubProcessesNumber>
@@ -110,10 +110,10 @@
         <BCC_UseClassicCompiler>false</BCC_UseClassicCompiler>
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <VerInfo_Locale>1033</VerInfo_Locale>
-        <Debugger_HostApplication>D:\Sandboxes\ogs\ogs-trunk\bin\debug\lua-5.1-dyn.exe</Debugger_HostApplication>
-        <Debugger_RunParams>luaopcua_test_ogs_interface.lua</Debugger_RunParams>
+        <Debugger_HostApplication>D:\Sandboxes\ogs\ogs-trunk\bin\debug\Monitor.exe</Debugger_HostApplication>
+        <Debugger_RunParams>luaopcua_test_simple.lua</Debugger_RunParams>
         <Debugger_CWD>D:\Sandboxes\ogs\ogs-trunk\bin\debug</Debugger_CWD>
-        <LinkPackageStatics>rtl.lib</LinkPackageStatics>
+        <LinkPackageStatics>rtl.lib;vclwinx.lib;vclimg.lib;vcl.lib;bindengine.lib;xmlrtl.lib;vclactnband.lib;vclx.lib</LinkPackageStatics>
         <VerInfo_AutoGenVersion>true</VerInfo_AutoGenVersion>
         <VerInfo_MinorVer>2</VerInfo_MinorVer>
         <VerInfo_Keys>CompanyName=Haller + Erne GmbH;FileDescription=$(MSBuildProjectName);FileVersion=1.2.0.0;InternalName=Lua OPCUA open62541 interface ;LegalCopyright=(c) 2023 Haller + Erne GmbH;LegalTrademarks=(c) 2023 Haller + Erne GmbH;OriginalFilename=LuaOPCUA.dll;ProgramID=de.haller-erne.$(MSBuildProjectName);ProductName=$(MSBuildProjectName);ProductVersion=3.1.0.0;Comments=</VerInfo_Keys>
@@ -137,9 +137,6 @@
             <DependentOn>..\..\Common\he\logger_impl_dll.h</DependentOn>
             <BuildOrder>23</BuildOrder>
         </CppCompile>
-        <CppCompile Include="DllMain.cpp">
-            <BuildOrder>1</BuildOrder>
-        </CppCompile>
         <DefFile Include="LuaOPCUA.def">
             <BuildOrder>19</BuildOrder>
         </DefFile>
@@ -147,6 +144,9 @@
             <BuildOrder>0</BuildOrder>
             <PCH>true</PCH>
         </PCHCompile>
+        <CppCompile Include="OpcUA_DllMain.cpp">
+            <BuildOrder>1</BuildOrder>
+        </CppCompile>
         <None Include="sol\sol.hpp">
             <BuildOrder>2</BuildOrder>
         </None>
@@ -156,10 +156,6 @@
         <None Include="src\certificates.h">
             <BuildOrder>4</BuildOrder>
         </None>
-        <CppCompile Include="src\IOThread.cpp">
-            <DependentOn>src\IOThread.h</DependentOn>
-            <BuildOrder>24</BuildOrder>
-        </CppCompile>
         <CppCompile Include="src\IOThread_Params.cpp">
             <DependentOn>src\IOThread_Params.h</DependentOn>
             <BuildOrder>22</BuildOrder>
@@ -188,9 +184,21 @@
         <None Include="src\opcua_interfaces.hpp">
             <BuildOrder>12</BuildOrder>
         </None>
+        <CppCompile Include="src\OpcUA_IOThread.cpp">
+            <DependentOn>src\OpcUA_IOThread.h</DependentOn>
+            <BuildOrder>24</BuildOrder>
+        </CppCompile>
         <None Include="src\read_file.h">
             <BuildOrder>13</BuildOrder>
         </None>
+        <CppCompile Include="src\Serializer.cpp">
+            <DependentOn>src\Serializer.h</DependentOn>
+            <BuildOrder>24</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="src\Symbols.cpp">
+            <DependentOn>src\Symbols.h</DependentOn>
+            <BuildOrder>23</BuildOrder>
+        </CppCompile>
         <None Include="..\open62541\pack\1.1\deps\open62541_queue.h">
             <BuildOrder>20</BuildOrder>
         </None>
