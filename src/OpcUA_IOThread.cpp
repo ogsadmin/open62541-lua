@@ -48,7 +48,8 @@ void TOpcUA_IOThread::InitClientConfig()
 		exit(-1);
 	}
 	UA_ClientConfig* cc = UA_Client_getConfig(_client);
-	_params->UpdateConfig(cc);
+	UA_StatusCode rc = _params->UpdateConfig(cc);
+    // TODO: check rc for errors!
 /*
 	UA_ClientConfig_setDefault(cc);
 	_config = new UA_ClientConfig_Proxy(cc);
@@ -661,7 +662,9 @@ UA_StatusCode TOpcUA_IOThread::readStructureDefinition(UA_NodeId& nidNodeId, con
 			ts.Flags.Bits.hasOffset = 1;
 			StructType = "struct with optional fields";
 			break;
-		case UA_STRUCTURETYPE_UNION: StructType = "(unsupported!)"; break;
+		case UA_STRUCTURETYPE_UNION:
+			StructType = "(unsupported!)";
+			break;
 		}
 		ts.ItemType = (char*)def->defaultEncodingId.identifier.string.data;
 		ts.ItemName = Name;
@@ -672,10 +675,32 @@ UA_StatusCode TOpcUA_IOThread::readStructureDefinition(UA_NodeId& nidNodeId, con
 		for (int i = 0; i < def->fieldsSize; i++) {
 			UA_StructureField *pFld = &def->fields[i];
 			he::Symbols::TypeInfo ti;
-			if (pFld->valueRank != -1) {
+			if (pFld->valueRank > 0) {      // [1] OneDimension, [>1] array with the specified number of dimensions
+				// this is an array
 				ti.DataType.isArray = 1;
 				ti.ValueRank = pFld->valueRank;
+				// copy the dimensions size
+				for (int a = 0; a < pFld->arrayDimensionsSize; a++) {
+					ti.ArrayDimensions.push_back(pFld->arrayDimensions[a]);
+				}
 			}
+/*
+			else if (pFld->valueRank == 0) {    // OneOrMoreDimensions
+				// the Value is an array with one or more dimensions (!!!)
+			}
+			else if (pFld->valueRank == -1) {   // Scalar
+				// the Value is a scalar
+			}
+			else if (pFld->valueRank == -2) {   // Any
+				// the Value can be a scalar or an array with any number of dimensions (!!!)
+			}
+			else if (pFld->valueRank == -3) {   // ScalarOrOneDimension
+				// the Value can be a scalar or a one-dimensional array
+			}
+			else {
+				// Error!
+			}
+  */
 			// Get the names...
 			// nameNative, nameBrowse, nameDisplay
 			//readNodeNames(nidNodeId, ti.nameBrowse, ti.nameDisplay);

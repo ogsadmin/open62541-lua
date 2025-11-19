@@ -12,7 +12,7 @@
 #include "module_node.hpp"
 //#include "certificates.h"
 #include "OpcUA_IOThread.h"
-#include <Serializer.h>
+#include <OpcUA_Serializer_Lua.h>
 #include <logger.h>
 extern tXTRACE_Driver gXTRACE_Driver;
 
@@ -1102,6 +1102,26 @@ public:
 		return result;
 	}
 
+	// Get input variable type definition in internal (userdata) representation
+	TypeNode_Proxy getInputsTypeRaw(sol::this_state L) {
+
+		sol::variadic_results result;
+		const he::Symbols::TypeNode& symDef = _ioThread->GetSymDefRd();
+		const TypeNode_Proxy tnp(symDef);
+		return tnp;
+	}
+
+	// Get output variable type definition in internal (userdata) representation
+	// Returns userdata<he::Symbols::TypeNode> or nil,errormessage
+	TypeNode_Proxy getOutputsTypeRaw(sol::this_state L) {
+
+		sol::variadic_results result;
+		const he::Symbols::TypeNode& symDef = _ioThread->GetSymDefWr();
+		const TypeNode_Proxy tnp(symDef);
+		return tnp;
+		//return getType(L, symDef);
+	}
+/*
 	// Get input variable type definition
 	// Returns <table> or nil,errormessage
 	sol::variadic_results getInputsType(sol::this_state L) {
@@ -1110,6 +1130,7 @@ public:
 		const he::Symbols::TypeNode& symDef = _ioThread->GetSymDefRd();
 		return getType(L, symDef);
 	}
+
 	// Get output variable type definition
 	// Returns <table> or nil,errormessage
 	sol::variadic_results getOutputsType(sol::this_state L) {
@@ -1118,7 +1139,7 @@ public:
 		const he::Symbols::TypeNode& symDef = _ioThread->GetSymDefWr();
 		return getType(L, symDef);
 	}
-
+*/
 	// Get an internal type definition as lua table
 	// Returns <table> or nil,errormessage
 	sol::variadic_results getType(sol::this_state L, const he::Symbols::TypeNode& symDef)
@@ -1127,7 +1148,7 @@ public:
 		if (!symDef.item.isValid()) {
 			// We don't have a valid symbol definition (likely the PLC uses some unknown
 			// data types), so this function cannot be used.
-            // Use raw I/O instead!
+			// Use raw I/O instead!
 			result.push_back({ L, sol::lua_nil });
 			result.push_back({ L, sol::in_place, "Symbol definition is not valid!" });
 			return result;
@@ -1360,10 +1381,12 @@ void reg_opcua_client(sol::table& module) {
 		//"getState", &UA_Client_CyclicIO::getState,
 		"getState", &UA_Client_CyclicIO::getState,  // returns true, if cyclic io is running
 		"getInputsTbl", &UA_Client_CyclicIO::getInputs,  // returns <bytestring>,<last read status>
-		"getInputsType", &UA_Client_CyclicIO::getInputsType,
+		"getInputsType", &UA_Client_CyclicIO::getInputsTypeRaw,
+		//"getInputsTypeTbl", &UA_Client_CyclicIO::getInputsType,
 		"setOutputsTbl", &UA_Client_CyclicIO::setOutputs,
 		"getOutputsTbl", &UA_Client_CyclicIO::getOutputs,
-		"getOutputsType", &UA_Client_CyclicIO::getOutputsType,
+		//"getOutputsTypeTbl", &UA_Client_CyclicIO::getOutputsType,
+		"getOutputsType", &UA_Client_CyclicIO::getOutputsTypeRaw,
 		"getInputs", &UA_Client_CyclicIO::getInputsRaw,  // returns <bytestring>,<last read status>
 		"setOutputs", &UA_Client_CyclicIO::setOutputsRaw,
 		// "getInfo", &UA_Client_CyclicIO::getInfo,     // test howto pack a plain lua table as variadic_result

@@ -1,7 +1,7 @@
 //---------------------------------------------------------------------------
 // Lua serialization/deserialization based on he::Symbols type description
-#ifndef SerializerH
-#define SerializerH
+#ifndef OpcUA_SerializerH
+#define OpcUA_SerializerH
 //---------------------------------------------------------------------------
 #include <lua.hpp>
 #include "Symbols.h"

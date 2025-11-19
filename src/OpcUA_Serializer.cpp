@@ -8,7 +8,7 @@
 //       "nice" about additional and missing LUA table fields when serializing.
 #pragma hdrstop
 
-#include "Serializer.h"
+#include "OpcUA_Serializer.h"
 #include <assert.h>
 #include <map>
 #include <assert.h>
@@ -183,6 +183,9 @@ static int deserialize(lua_State* L, const he::Symbols::TypeNode& node, const ui
 				AnsiString(ti.ItemType).c_str(), (uint32_t)ti.DataType.type,
 				AnsiString(ti.ItemName).c_str(), iCount);
 			#endif
+			// this entry is an array - so add a table under the given name here!
+			lua_pushstring(L, ti.ItemName.c_str());
+			lua_newtable(L);
 		}
 		for (int iSeq = 0; iSeq < iCount; iSeq++) {
 			if (ti.DataType.isStruct)
@@ -193,18 +196,31 @@ static int deserialize(lua_State* L, const he::Symbols::TypeNode& node, const ui
 				pBuf = pBegin + addr;
 			}
 			else {
-				// Plain field
-				lua_pushstring(L, ti.ItemName.c_str());
+				if (ti.DataType.isArray) {
+					// Array entry - push the value first, then later use rawseti()
+				}
+				else {
+					// Plain field - use the name
+					lua_pushstring(L, ti.ItemName.c_str());
+				}
 				// deserialize the value
 				TDeserializer::iterator it = _deserialize.find(ti.DataType.type);
 				int iLen = 0;
 				if (it != _deserialize.end() && it->second != nullptr) {
+                    // push the deserialized value to the lua stack:
 					iLen = it->second(L, ti, pBuf);
 				}
 				else {
 					lua_pushstring(L, "!!!ERROR: cannot deserialize this type!!!");
 				}
-				lua_settable(L, -3);
+				if (ti.DataType.isArray) {
+					// Array entry - add the index to set
+					lua_rawseti(L, -2, iSeq + 1);       // lua arrays start from 1
+				}
+				else {
+					// Plain field - add the table value
+					lua_settable(L, -3);
+				}
 				#ifdef XDUMP
 				AnsiString sVal;
 				int iLen = 0;
@@ -240,6 +256,10 @@ static int deserialize(lua_State* L, const he::Symbols::TypeNode& node, const ui
 				addr += iLen;
 				pBuf += iLen;
 			}
+		} // for each array element
+		if (ti.DataType.isArray) {
+			// finish the array
+			lua_settable(L, -3);
 		}
 	}
 	// finish table
@@ -504,20 +524,62 @@ static int serialize(lua_State* L, const he::Symbols::TypeNode& node, uint8_t* p
 		const he::Symbols::TypeInfo& ti = tn.item;
 		int iCount = 1;
 		if (ti.DataType.isArray) {
-            // does not work yet!
-			iCount = *((uint32_t*)pBuf);
-			addr += 4;
-			pBuf += 4;
+			// NOTE: only 1-dimensional arrays are supported
+			if (ti.ValueRank != 1) {
+				XTRACE(XPERRORS, "%04d: %*s    (%d) %s(%d) Name=%s: ValueRank %d NOT SUPPORTED!",
+					addr, level*4, " ", i,
+					AnsiString(ti.ItemType).c_str(), (uint32_t)ti.DataType.type,
+					AnsiString(ti.ItemName).c_str(), ti.ValueRank);
+			}
+			// Get the table values, see https://github.com/mikolajgucki/lua-tutorial/blob/master/04-manipulating-lua-tables-in-cpp/manipluating-lua-tables-in-cpp.md
+			iCount = ti.ArrayDimensions[0]; 				// *((uint32_t*)pBuf);
 			#ifdef XDUMP
 			XTRACE(XPDIAG1, "%04d: %*s    (%d) %s(%d) Name=%s Array[%d] ",
 				addr, level*4, " ", i,
 				AnsiString(ti.ItemType).c_str(), (uint32_t)ti.DataType.type,
 				AnsiString(ti.ItemName).c_str(), iCount);
 			#endif
+			// Get the (sub) table on the top of the stack with the given name
+			lua_getfield(L, -1, ti.ItemName.c_str());    	// --> (table) value is now TOS
+			int ttype = lua_type(L, -1);
+			// get the actual table length
+			int length = lua_objlen(L, -1);
+			if (length < iCount) {
+				iCount = length;                            // only read as much items as available (OPC-UA only defines the max. number of elements)
+			}
+			lua_pushnil(L);                                 // push the first key
+			// add the length dword                         // TODO: support multidimensions, see!
+			// see: https://reference.opcfoundation.org/Core/Part6/v105/docs/5.2.5
+			uint32_t* p = (uint32_t*)pBuf;
+			*p = iCount;
+			addr = addr + sizeof(uint32_t);
+			pBuf = pBuf + sizeof(uint32_t);
 		}
 		for (int iSeq = 0; iSeq < iCount; iSeq++) {
-		//		XTRACE(XPDIAG2, "    %s", AnsiString(node.item.ItemName.c_str()));
-			lua_getfield(L, -1, ti.ItemName.c_str());    	// --> (table) value is now TOS
+			if (ti.DataType.isArray) {
+				// get the table element[iSeq]
+				// table is at -2
+				// key is at -1
+				if (lua_next(L, -2)) {
+					// key is at -2
+					// value is at -1
+				}
+				else {
+					// error!
+					XTRACE(XPERRORS, "%04d: %*s    (%d) %s(%d) Name=%s: array index [%d] MISSING!",
+						addr, level*4, " ", i,
+						AnsiString(ti.ItemType).c_str(), (uint32_t)ti.DataType.type,
+						AnsiString(ti.ItemName).c_str(), iSeq+1);
+					// simulate the value (next key and a nil value)
+					lua_pushinteger(L, iSeq+1);
+					lua_pushnil(L);
+				}
+			}
+			else {
+				// get the value
+			//		XTRACE(XPDIAG2, "    %s", AnsiString(node.item.ItemName.c_str()));
+				lua_getfield(L, -1, ti.ItemName.c_str());    	// --> (table) value is now TOS
+            }
 			if (ti.DataType.isStruct)
 			{
 				// Struct field?
@@ -527,7 +589,7 @@ static int serialize(lua_State* L, const he::Symbols::TypeNode& node, uint8_t* p
 				lua_pop(L, 1);      // remove the table
 			}
 			else {
-				// deserialize the value
+				// serialize the value
 				int iLen = 0;
 				TSerializer::iterator it = _serialize.find(ti.DataType.type);
 				if (it != _serialize.end()) {
@@ -572,6 +634,10 @@ static int serialize(lua_State* L, const he::Symbols::TypeNode& node, uint8_t* p
 				addr += iLen;
 				pBuf += iLen;
 			}
+		} // for each array element
+		if (ti.DataType.isArray) {
+			// cleanup LUA stack
+			lua_pop(L, 1);
 		}
 	}
 	// finish table

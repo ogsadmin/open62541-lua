@@ -60,7 +60,7 @@
         <ILINK_GenerateImportLibrary>true</ILINK_GenerateImportLibrary>
         <_TCHARMapping>char</_TCHARMapping>
         <IncludePath>..\..\Common\lua\;..\..\Common\he\;..\open62541\pack\1.1\deps\;..\open62541\pack\1.1\;src\;sol\;..\openssl\openssl-1.1\x86\include;$(LUAINC);$(LUAINC)\..\etc;$(IncludePath)</IncludePath>
-        <ILINK_LibraryPath>..\..\Common\lua\;..\..\Common\he\;..\open62541\pack\1.1\deps\;..\open62541\pack\1.1\;..\62180b719d\;lua\;src\;sol\;$(LUALIB);$(ILINK_LibraryPath)</ILINK_LibraryPath>
+        <ILINK_LibraryPath>..\open62541\pack\1.4.10\;..\..\Common\lua\;..\..\Common\he\;..\open62541\pack\1.1\deps\;..\open62541\pack\1.1\;..\62180b719d\;lua\;src\;sol\;$(LUALIB);$(ILINK_LibraryPath)</ILINK_LibraryPath>
         <Defines>UA_ENABLE_ENCRYPTION_OPENSSL;UA_ENABLE_ENCRYPTION;LUA_BUILD_AS_DLL;$(Defines)</Defines>
         <VerInfo_Locale>1031</VerInfo_Locale>
         <VerInfo_Keys>CompanyName=;FileDescription=$(MSBuildProjectName);FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProgramID=com.embarcadero.$(MSBuildProjectName);ProductName=$(MSBuildProjectName);ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
@@ -110,7 +110,7 @@
         <BCC_UseClassicCompiler>false</BCC_UseClassicCompiler>
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <VerInfo_Locale>1033</VerInfo_Locale>
-        <Debugger_HostApplication>D:\Sandboxes\ogs\ogs-trunk\bin\debug\Monitor.exe</Debugger_HostApplication>
+        <Debugger_HostApplication>D:\Sandboxes\ogs\ogs-trunk\bin\debug\lua-5.1-dyn.exe</Debugger_HostApplication>
         <Debugger_RunParams>luaopcua_test_simple.lua</Debugger_RunParams>
         <Debugger_CWD>D:\Sandboxes\ogs\ogs-trunk\bin\debug</Debugger_CWD>
         <LinkPackageStatics>rtl.lib;vclwinx.lib;vclimg.lib;vcl.lib;bindengine.lib;xmlrtl.lib;vclactnband.lib;vclx.lib</LinkPackageStatics>
@@ -189,25 +189,29 @@
             <DependentOn>src\OpcUA_IOThread.h</DependentOn>
             <BuildOrder>24</BuildOrder>
         </CppCompile>
+        <CppCompile Include="src\OpcUA_Serializer.cpp">
+            <DependentOn>src\OpcUA_Serializer.h</DependentOn>
+            <BuildOrder>24</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="src\OpcUA_Serializer_Lua.cpp">
+            <DependentOn>src\OpcUA_Serializer_Lua.h</DependentOn>
+            <BuildOrder>25</BuildOrder>
+        </CppCompile>
         <None Include="src\read_file.h">
             <BuildOrder>13</BuildOrder>
         </None>
-        <CppCompile Include="src\Serializer.cpp">
-            <DependentOn>src\Serializer.h</DependentOn>
-            <BuildOrder>24</BuildOrder>
-        </CppCompile>
         <CppCompile Include="src\Symbols.cpp">
             <DependentOn>src\Symbols.h</DependentOn>
             <BuildOrder>23</BuildOrder>
         </CppCompile>
         <None Include="..\open62541\pack\1.1\deps\open62541_queue.h">
-            <BuildOrder>20</BuildOrder>
+            <BuildOrder>24</BuildOrder>
         </None>
         <CppCompile Include="..\open62541\pack\1.1\open62541.c">
-            <BuildOrder>18</BuildOrder>
+            <BuildOrder>22</BuildOrder>
         </CppCompile>
         <None Include="..\open62541\pack\1.1\open62541.h">
-            <BuildOrder>19</BuildOrder>
+            <BuildOrder>23</BuildOrder>
         </None>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
@@ -233,10 +237,10 @@
                     <ProjectProperties Name="IndexFiles">False</ProjectProperties>
                 </ProjectProperties>
                 <Excluded_Packages>
-                    <Excluded_Packages Name="$(BDSBIN)\bcboffice2k280.bpl">Embarcadero C++Builder Office 2000 Servers Package</Excluded_Packages>
-                    <Excluded_Packages Name="$(BDSBIN)\bcbofficexp280.bpl">Embarcadero C++Builder Office XP Servers Package</Excluded_Packages>
-                    <Excluded_Packages Name="$(BDSBIN)\dcloffice2k280.bpl">Microsoft Office 2000 Sample Automation Server Wrapper Components</Excluded_Packages>
-                    <Excluded_Packages Name="$(BDSBIN)\dclofficexp280.bpl">Microsoft Office XP Sample Automation Server Wrapper Components</Excluded_Packages>
+                    <Excluded_Packages Name="$(BDSBIN)\bcboffice2k280.bpl">Embarcadero C++Builder-Package für Office 2000-Server</Excluded_Packages>
+                    <Excluded_Packages Name="$(BDSBIN)\bcbofficexp280.bpl">Embarcadero C++Builder-Package für Office XP-Server</Excluded_Packages>
+                    <Excluded_Packages Name="$(BDSBIN)\dcloffice2k280.bpl">Microsoft Office 2000 Beispiele für gekapselte Komponenten für Automatisierungsserver</Excluded_Packages>
+                    <Excluded_Packages Name="$(BDSBIN)\dclofficexp280.bpl">Microsoft Office XP Beispiele für gekapselte Komponenten für Automation Server</Excluded_Packages>
                 </Excluded_Packages>
             </CPlusPlusBuilder.Personality>
             <Deployment Version="4">

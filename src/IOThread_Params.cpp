@@ -4,6 +4,7 @@
 
 #include "IOThread_Params.h"
 #include "read_file.h"
+#include "logger.h"
 
 //---------------------------------------------------------------------------
 #pragma package(smart_init)
@@ -36,8 +37,20 @@ UA_StatusCode IOThread_Params::UpdateConfig(UA_ClientConfig *cc)
 		// Load certificate and private key
 		UA_ByteString_clear(&Certificate);
 		UA_ByteString_clear(&PrivateKey);
-		Certificate = loadFile(CertificateFile.c_str());
-		PrivateKey  = loadFile(PrivateKeyFile.c_str());
+		if (CertificateFile.size() > 0) {
+			Certificate = loadFile(CertificateFile.c_str());
+			if (Certificate.data == NULL) {
+				XTRACE(XPERRORS, "ERROR: failed to read certificate file %s: errno = %d", CertificateFile.c_str(), errno);
+				rc = UA_STATUSCODE_BADNOTFOUND;
+			}
+		}
+		if (PrivateKeyFile.size() > 0) {
+			PrivateKey  = loadFile(PrivateKeyFile.c_str());
+			if (PrivateKey.data == NULL) {
+				XTRACE(XPERRORS, "ERROR: failed to read private key file %s: errno = %d", PrivateKeyFile.c_str(), errno);
+				rc = UA_STATUSCODE_BADNOTFOUND;
+			}
+		}
 
 		/* Load the trustList. Load revocationList is not supported now */
 		/* trust list not support for now
@@ -57,4 +70,5 @@ UA_StatusCode IOThread_Params::UpdateConfig(UA_ClientConfig *cc)
 	}
 	cc->timeout = timeout;
 	cc->secureChannelLifeTime = secureChannelLifeTime;
+    return rc;
 }

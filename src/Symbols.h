@@ -89,8 +89,10 @@ public:
 		uint32_t 		raw;
 	} DataType;
     // TODO: add MaxSize?
-	uint32_t            DataSize;   // For fixed size data items
-	int                 ValueRank;  // Array dimensions
+	uint32_t            DataSize;   		// For fixed size data items
+	// ValueRank: see https://reference.opcfoundation.org/Core/Part3/v104/docs/5.6.2
+	int                 ValueRank;  		// Type of the variable: Scalar(-1), Any(-2), ScalarOrOneDimension(-3), OneOrMoreDimensions(0), OneDimension(1), >= 1 array with specified number of dimesions
+	std::vector<int>    ArrayDimensions;    // empty, if ValueRank <= 0, else max. supported length per dimension (0 if unknown)
 	union {
 		struct {
 			uint32_t 	isOptional 	: 1;
@@ -120,6 +122,7 @@ public:
 	TypeInfo             	item;
 	std::vector<TypeNode> 	children;
 	void Clear();
+	const char* GetItemName() { return item.ItemName.c_str(); }
 	void Set(const TypeDB* pDB, const TypeInfo& i);
 	TypeNode& AddChild(const TypeDB* pDB, const TypeInfo& i, int Offset);
 	//void Set(const TypeDB* pDB, const TypeInfo& i, bool Recursive = false);

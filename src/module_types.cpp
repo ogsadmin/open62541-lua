@@ -13,6 +13,8 @@
 #include "sol/sol.hpp"
 
 #include "opcua_interfaces.hpp"
+#include "Symbols.h"
+#include "OpcUA_Serializer_Lua.h"
 
 namespace lua_opcua {
 
@@ -30,7 +32,7 @@ printNumber(unsigned short n, unsigned char *pos, size_t digits) {
     for(size_t i = digits; i > 0; --i) {
         pos[i-1] = (unsigned char)((n % 10) + '0');
         n = n / 10;
-    }
+	}
 }
 
 UA_String
@@ -100,6 +102,7 @@ const char* get_node_data_value_type(const UA_NodeId& typeId) {
 	return "unknown";
 }
 
+
 void reg_opcua_types(sol::table& module) {
 	module.new_usertype<UA_DateTime>("DateTime",
 		"new", sol::factories([](void) { return UA_DateTime_now(); }),
@@ -126,6 +129,17 @@ void reg_opcua_types(sol::table& module) {
 		"day", &UA_DateTimeStruct::day,
 		"month", &UA_DateTimeStruct::month,
 		"year", &UA_DateTimeStruct::year
+	);
+
+	module.new_usertype<TypeNode_Proxy>("TypeInfo",      // the serializer wrapper (for TypeInfo)
+		sol::constructors<TypeNode_Proxy()>(),
+		//"new", sol::factories([](void) { return new he::Symbols::TypeNode(); }),
+		//"__gc", sol::destructor([](he::Symbols::TypeNode *p){ delete p; }),
+		//"getSymDef", getType(L, symDef);
+		"name", sol::property(&TypeNode_Proxy::GetItemName),
+		"serialize", &TypeNode_Proxy::serialize,
+		"deserialize", &TypeNode_Proxy::deserialize,
+		"asTable", &TypeNode_Proxy::asTable
 	);
 
 	module.new_usertype<UA_DataType>("DataType",
