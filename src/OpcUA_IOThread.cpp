@@ -163,6 +163,7 @@ void TOpcUA_IOThread::StateMachine()
 			_state = 99;
 		}
 		else {
+	        _typeDB.Clear();
 			_state = 20;
 		}
 	}
@@ -495,7 +496,7 @@ UA_StatusCode TOpcUA_IOThread::readwriteCyclic()
 
 //---------------------------------------------------------------------------
 // WARNING: the returned object *must* be freed after use!
-UA_StatusCode TOpcUA_IOThread::readExtensionObjectValue(const UA_NodeId nodeId, UA_Variant *outValue, UA_NodeId* pExpandedNodeId)
+UA_StatusCode TOpcUA_IOThread::readExtensionObjectValue(const UA_NodeId nodeId, UA_Variant *outValue, UA_NodeId* outExpandedNodeId)
 {
 	// Similar to UA_Client_readValueAttribute, but returns the "raw" (undecoded)
 	// data of an extension object as binary string.
@@ -548,22 +549,22 @@ UA_StatusCode TOpcUA_IOThread::readExtensionObjectValue(const UA_NodeId nodeId, 
 	if (res->value.type->typeKind == UA_DATATYPEKIND_EXTENSIONOBJECT) {
 		UA_ExtensionObject* eo = (UA_ExtensionObject*)(res->value.data);
 		//UA_ExtensionObjectEncoding encoding = eo->encoding;
-		if (pExpandedNodeId) {
+		if (outExpandedNodeId) {
 			// create a new NodeID as a copy of the exisiting one - cleanup first!
-			switch(pExpandedNodeId->identifierType) {
+			switch(outExpandedNodeId->identifierType) {
 				case UA_NODEIDTYPE_STRING:
 				case UA_NODEIDTYPE_BYTESTRING:      // malloced types...
-					UA_String_clear(&pExpandedNodeId->identifier.string);
+					UA_String_clear(&outExpandedNodeId->identifier.string);
 					break;
 			}
-			*pExpandedNodeId = eo->content.encoded.typeId;
+			*outExpandedNodeId = eo->content.encoded.typeId;
 			UA_String sTmp;
-			switch(pExpandedNodeId->identifierType) {
+			switch(outExpandedNodeId->identifierType) {
 				case UA_NODEIDTYPE_STRING:
 				case UA_NODEIDTYPE_BYTESTRING:      // malloced types...
-					UA_ByteString_allocBuffer(&sTmp, pExpandedNodeId->identifier.string.length);
-					memcpy(sTmp.data, pExpandedNodeId->identifier.string.data, pExpandedNodeId->identifier.string.length);
-					pExpandedNodeId->identifier.string = sTmp;  // use our newly allocated object
+					UA_ByteString_allocBuffer(&sTmp, outExpandedNodeId->identifier.string.length);
+					memcpy(sTmp.data, outExpandedNodeId->identifier.string.data, outExpandedNodeId->identifier.string.length);
+					outExpandedNodeId->identifier.string = sTmp;  // use our newly allocated object
 					break;
 			}
 		}
@@ -625,9 +626,9 @@ UA_StatusCode TOpcUA_IOThread::readNodeNames(UA_NodeId& nidNodeId, String& nameB
 	return retval;
 }
 
-static UTF8String str(const UA_String& name)
+static std::string str(const UA_String& name)
 {
-	UTF8String tmp((const char*)name.data, name.length);
+	std::string tmp((const char*)name.data, name.length);
 	return tmp;
 }
 
@@ -742,7 +743,7 @@ UA_StatusCode TOpcUA_IOThread::readStructureDefinition(UA_NodeId& nidNodeId, con
 				XTRACE(XPDIAG2, "%04d: %*s    (%d) Type=%d, Opt=%d, Rank=%d, Name=%s (%s)",
 					offset, level*4, " ", i,
 					pFld->dataType.identifier.numeric, pFld->isOptional?1:0, pFld->valueRank,
-					str(pFld->name).c_str(), AnsiString(ti.ItemType).c_str());
+					str(pFld->name).c_str(), ti.ItemType.c_str());
 				offset = offset + ti.Offset;
 				sym.AddChild(NULL, ti, offset);
 			}
@@ -775,14 +776,14 @@ UA_StatusCode TOpcUA_IOThread::readStructureDefinition(UA_NodeId& nidNodeId, con
 				XTRACE(XPDIAG2, "%04d: %*s    (%d) Type=%d, Opt=%d, Rank=%d, Name=%s (Siemens \"%s\")",
 					offset, level*4, " ", i,
 					pFld->dataType.identifier.numeric, pFld->isOptional?1:0, pFld->valueRank,
-					str(pFld->name).c_str(), AnsiString(ti.ItemType).c_str());
+					str(pFld->name).c_str(), ti.ItemType.c_str());
 				offset = offset + ti.Offset;
 				sym.AddChild(NULL, ti, offset);
 			}
 			else if (pFld->dataType.identifierType == UA_NODEIDTYPE_STRING) {
 				//const UA_String& string = pFld->dataType.identifier.string;
 				// struct inside the struct, so recurse...
-				ti.ItemName = str(pFld->name);        // eigentlich redundat, dann können wir aber leichter testen
+				ti.ItemName = str(pFld->name);        // eigentlich redundant, dann können wir aber leichter testen
 				he::Symbols::TypeNode& sub = sym.AddChild(NULL, ti, offset);
 				retval = readStructureDefinition(pFld->dataType, str(pFld->name).c_str(), sub, offset, level + 1);
 				if (retval != 0) {

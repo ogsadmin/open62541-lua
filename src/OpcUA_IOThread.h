@@ -35,6 +35,7 @@ public:
 	void GetClientState(UA_SecureChannelState* chn_s, UA_SessionState* ss_s, UA_StatusCode* sc);
 	const he::Symbols::TypeNode& GetSymDefRd();
 	const he::Symbols::TypeNode& GetSymDefWr();
+    const he::Symbols::TypeDB& GetDB() { return _typeDB; }              // the cache for the OPC-UA types
 
 	class Stats {
 	public:
@@ -51,6 +52,7 @@ public:
 	}
 
 private:
+	he::Symbols::TypeDB _typeDB;              // the cache for the OPC-UA types
 	class CyclicNode {
 	public:
 		CyclicNode() {

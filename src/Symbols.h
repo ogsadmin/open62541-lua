@@ -2,8 +2,9 @@
 #ifndef SymbolsH
 #define SymbolsH
 //---------------------------------------------------------------------------
-#include <System.hpp>
+#include <string>
 #include <vector>
+#include <map>
 //---------------------------------------------------------------------------
 
 namespace he {
@@ -102,15 +103,16 @@ public:
 		uint32_t        raw;
 	} Flags;
 	// TODO: replace with std::string to make it more portable!
-	UTF8String  		ItemName;
-	UTF8String  		ItemType;
+	std::string  		ItemName;
+	std::string  		ItemType;
+	std::string  		ItemEncoding;
 	//String              nameNative, nameBrowse, nameDisplay;
 	int                 Offset;   	// Absolute offset (if available)
 	//CAdsSymbolInfo 		Info;
 	//PAdsDatatypeEntry 	Entry;
 	bool isValid() const;
 	bool IsRoot() const;
-	void Set(Type t, const UTF8String& ItemName, const UTF8String& ItemType, int DataSize = -1);
+	void Set(Type t, const std::string& ItemName, const std::string& ItemType, int DataSize = -1);
 };
 
 class TypeNode       // the symbol "tree"
@@ -137,14 +139,23 @@ class TypeDB
 {
 public:
 	TypeDB();
-	TypeDB(void* pDatatypes, size_t nDTSize);
-	~TypeDB();
-	void Init(void* pDatatypes, size_t nDTSize);
+	//TypeDB(void* pDatatypes, size_t nDTSize);
+	//~TypeDB();
+	//void Init(void* pDatatypes, size_t nDTSize);
 	//const PAdsDatatypeEntry FindTypeByName(const char* name) const;
-	const TypeNode& FindTypeByName(const char* name) const;
+	bool HasTypeByName(const std::string& ItemType);
+	const TypeNode& FindTypeByName(const std::string& ItemType);
+	void Add(const std::string& varName, const TypeNode& node);
+	void Clear();
+
+	typedef std::map<std::string, std::string> tVariableMap;    // map variable name to type name
+	typedef std::map<std::string, TypeNode> tNameMap;           // map type name to type definition
+	const tNameMap& GetTypeMap() { return _types; };
 private:
 	//PBYTE							m_pDatatypes;
 	//std::vector<PAdsDatatypeEntry>  m_vDatatypeArray;
+	tNameMap _types;
+    tVariableMap _vars;
 };
 
 }; // namespace Symbols

@@ -14,6 +14,7 @@
 #include "OpcUA_IOThread.h"
 #include <OpcUA_Serializer_Lua.h>
 #include <logger.h>
+#include "Symbols.h"
 extern tXTRACE_Driver gXTRACE_Driver;
 
 //const char *logCategoryNames[7] = {"network", "channel", "session", "server",
@@ -118,6 +119,7 @@ public:
 		return UA_Client_readValueAttribute(_client, nodeId, outValue);
 	}
 	UA_StatusCode readDataValue(const UA_NodeId nodeId, UA_DataValue *outDataValue) {
+        // TODO: correctly implement reading an extension object and return its raw or decoded value...
 		UA_ReadValueId id; UA_ReadValueId_init(&id);
 		id.nodeId = nodeId;
 		id.attributeId = UA_ATTRIBUTEID_VALUE;
@@ -133,7 +135,7 @@ public:
 									 outDataValue, &UA_TYPES[UA_TYPES_VARIANT]);
 #endif
 	}
-	UA_StatusCode readExtensionObjectValue(const UA_NodeId nodeId, UA_Variant *outValue) {
+	UA_StatusCode readExtensionObjectValue(const UA_NodeId nodeId, UA_Variant *outValue, UA_NodeId* outExpandedNodeId) {
 		// Similar to UA_Client_readValueAttribute, but returns the "raw" (undecoded)
 		// data of an extension object as binary string.
 		// This then allows LUA to decode the blob (e.g. using luastruct).
@@ -179,6 +181,25 @@ public:
 		if (res->value.type->typeKind == UA_DATATYPEKIND_EXTENSIONOBJECT) {
 			UA_ExtensionObject* eo = (UA_ExtensionObject*)(res->value.data);
 			//UA_ExtensionObjectEncoding encoding = eo->encoding;
+			if (outExpandedNodeId) {
+				// create a new NodeID as a copy of the exisiting one - cleanup first!
+				switch(outExpandedNodeId->identifierType) {
+					case UA_NODEIDTYPE_STRING:
+					case UA_NODEIDTYPE_BYTESTRING:      // malloced types...
+						UA_String_clear(&outExpandedNodeId->identifier.string);
+						break;
+				}
+				*outExpandedNodeId = eo->content.encoded.typeId;
+				UA_String sTmp;
+				switch(outExpandedNodeId->identifierType) {
+					case UA_NODEIDTYPE_STRING:
+					case UA_NODEIDTYPE_BYTESTRING:      // malloced types...
+						UA_ByteString_allocBuffer(&sTmp, outExpandedNodeId->identifier.string.length);
+						memcpy(sTmp.data, outExpandedNodeId->identifier.string.data, outExpandedNodeId->identifier.string.length);
+						outExpandedNodeId->identifier.string = sTmp;  // use our newly allocated object
+						break;
+				}
+			}
 			//UA_NodeId nodeId = eo->content.encoded.typeId;
 			int length = eo->content.encoded.body.length;
 			UA_Byte* data = eo->content.encoded.body.data;
@@ -196,6 +217,14 @@ public:
 		UA_ReadResponse_clear(&response);
 		return retval;
 	}
+	UA_StatusCode readStructureDefinition(const UA_NodeId nodeId, UA_StructureDefinition *outValue)
+	{
+		UA_StatusCode retval = __UA_Client_readAttribute(_client, &nodeId,
+			UA_ATTRIBUTEID_DATATYPEDEFINITION, outValue, &UA_TYPES[UA_TYPES_STRUCTUREDEFINITION]);
+
+		return retval;
+	}
+
 	UA_StatusCode readDataType(const UA_NodeId nodeId, UA_NodeId *outDataType) {
 		return UA_Client_readDataTypeAttribute(_client, nodeId, outDataType);
 	}
@@ -349,11 +378,19 @@ public:
 	}
 };
 
+static std::string str(const UA_String& name)
+{
+	std::string tmp((const char*)name.data, name.length);
+	return tmp;
+}
+
 class ClientNodeMgr : public NodeMgr {
 	UA_Client* _client;
 	ClientAttributeReader _reader;
 	ClientAttributeWriter _writer;
 public:
+	he::Symbols::TypeDB _db;                // type cache for serialization
+
 	ClientNodeMgr(UA_Client* client) : _client(client), _reader(client), _writer(client) {}
 	AttributeReader* getAttributeReader() {
 		return &_reader;
@@ -458,15 +495,215 @@ public:
 			const UA_NodeId methodId,
 			size_t inputSize,
 			const UA_Variant *input,
-            size_t *outputSize,
+			size_t *outputSize,
 			UA_Variant **output) {
 		return UA_Client_call(_client, objectId, methodId, inputSize, input, outputSize, output);
 	}
 
-	UA_StatusCode forEachChildNodeCall(UA_NodeId parentNodeId, 
+	UA_StatusCode forEachChildNodeCall(UA_NodeId parentNodeId,
 			UA_NodeIteratorCallback callback,
 			void *handle) {
 		return UA_Client_forEachChildNodeCall(_client, parentNodeId, callback, handle);
+	}
+
+	// Read the structure definition of the given data type
+	// Create a generic data type definition from the OPC-UA specific structure definition,
+	// so we can later serialize/deserialize (and create/read/update a LUA table)
+	UA_StatusCode readStructureDefinition(const UA_NodeId& nidNodeId, const std::string& Name, he::Symbols::TypeNode& typeNode, int offset, int level)
+	{
+		// see, if we already know this type...
+		if (_db.HasTypeByName(Name.c_str())) {
+			// this type is already in the DB
+			return UA_STATUSCODE_GOOD;
+		}
+
+		// not found, resolve and add it to the cache
+		//he::Symbols::TypeNode typeNode;
+		uint8_t buf[8192];
+		UA_StatusCode retval = __UA_Client_readAttribute(_client, &nidNodeId,
+			UA_ATTRIBUTEID_DATATYPEDEFINITION, buf, &UA_TYPES[UA_TYPES_STRUCTUREDEFINITION]);
+		if (0 == retval) {
+			// got the data definition!
+			he::Symbols::TypeInfo ts;
+			UA_StructureDefinition *def = (UA_StructureDefinition*)buf;
+			AnsiString StructType = "(unknown!)";
+			switch(def->structureType){
+			case UA_STRUCTURETYPE_STRUCTURE:
+				ts.DataType.isArray = 0;
+				ts.DataType.isStruct = 1;
+				ts.DataType.type = he::Symbols::TypeInfo::Type::S_StructFixed;
+				ts.Offset = 0;
+				StructType = "structure";
+				break;
+			// See OPCUA-Specs https://reference.opcfoundation.org/Core/Part6/v104/docs/5.2.7
+			// Max. 32 optional fields are allowed for a structure (single DWORD with bitfield)!
+			case UA_STRUCTURETYPE_STRUCTUREWITHOPTIONALFIELDS:
+				ts.DataType.isArray = 0;
+				ts.DataType.isStruct = 1;
+				ts.DataType.type = he::Symbols::TypeInfo::Type::S_StructOptFld;
+				ts.Offset = 4;
+				ts.Flags.Bits.hasOffset = 1;
+				StructType = "struct with optional fields";
+				break;
+			case UA_STRUCTURETYPE_UNION:
+				StructType = "(unsupported!)";
+				break;
+			}
+
+//			UA_String nodeIdStr = UA_STRING_NULL;
+//			//UA_NodeId_toString(&id, &nodeIdStr);
+//			UA_NodeId_print(&id, &nodeIdStr);
+//			std::string str = std::string((const char*)nodeIdStr.data, nodeIdStr.length);
+//			UA_String_clear(&nodeIdStr);
+			ts.ItemName = Name;
+			ts.ItemType = toString(nidNodeId); 						// "DT_" (data type)
+			ts.ItemEncoding = toString(def->defaultEncodingId); 	// "TE_" (structure encoding)
+			XTRACE(XPDIAG2, "%04d: %*s[%d] Struct: Type=%d (%s), Fields=%d Name=%s", offset, level*4, " ", level,
+				def->structureType, StructType.c_str(), def->fieldsSize, def->defaultEncodingId.identifier.string.data);
+			offset += ts.Offset;
+			typeNode.Set(NULL, ts);
+			for (int i = 0; i < def->fieldsSize; i++) {
+				UA_StructureField *pFld = &def->fields[i];
+				he::Symbols::TypeInfo ti;
+				if (pFld->valueRank > 0) {      // [1] OneDimension, [>1] array with the specified number of dimensions
+					// this is an array
+					ti.DataType.isArray = 1;
+					ti.ValueRank = pFld->valueRank;
+					// copy the dimensions size
+					for (int a = 0; a < pFld->arrayDimensionsSize; a++) {
+						ti.ArrayDimensions.push_back(pFld->arrayDimensions[a]);
+					}
+				}
+	/*
+				else if (pFld->valueRank == 0) {    // OneOrMoreDimensions
+					// the Value is an array with one or more dimensions (!!!)
+				}
+				else if (pFld->valueRank == -1) {   // Scalar
+					// the Value is a scalar
+				}
+				else if (pFld->valueRank == -2) {   // Any
+					// the Value can be a scalar or an array with any number of dimensions (!!!)
+				}
+				else if (pFld->valueRank == -3) {   // ScalarOrOneDimension
+					// the Value can be a scalar or a one-dimensional array
+				}
+				else {
+					// Error!
+				}
+	  */
+				// Get the names...
+				// nameNative, nameBrowse, nameDisplay
+				//readNodeNames(nidNodeId, ti.nameBrowse, ti.nameDisplay);
+
+				bool fRecurse = false;
+				if (pFld->dataType.namespaceIndex == 0 && pFld->dataType.identifierType == UA_NODEIDTYPE_NUMERIC) {
+					ti.ItemName = str(pFld->name);
+					/**
+					 * Namespace Zero NodeIds
+					 * ----------------------
+					 * Numeric identifiers of standard-defined nodes in namespace zero. The
+					 * following definitions are autogenerated from the ``/home/travis/build/open62541/open62541/tools/schema/NodeIds.csv`` file */
+					ti.DataType.isStruct = 0;
+					switch (pFld->dataType.identifier.numeric) {
+					case UA_NS0ID_BOOLEAN: 	  ti.Set(he::Symbols::TypeInfo::Type::T_Bool8, 		str(pFld->name), "Boolean"); break;
+					case UA_NS0ID_SBYTE: 	  ti.Set(he::Symbols::TypeInfo::Type::T_SInt8, 		str(pFld->name), "SByte"); break;
+					case UA_NS0ID_BYTE: 	  ti.Set(he::Symbols::TypeInfo::Type::T_UInt8, 		str(pFld->name), "Byte"); break;
+					case UA_NS0ID_INT16: 	  ti.Set(he::Symbols::TypeInfo::Type::T_SInt16, 		str(pFld->name), "Int16"); break;
+					case UA_NS0ID_UINT16: 	  ti.Set(he::Symbols::TypeInfo::Type::T_UInt16, 		str(pFld->name), "UInt16"); break;
+					case UA_NS0ID_INT32: 	  ti.Set(he::Symbols::TypeInfo::Type::T_SInt32, 		str(pFld->name), "Int32"); break;
+					case UA_NS0ID_UINT32: 	  ti.Set(he::Symbols::TypeInfo::Type::T_UInt32, 		str(pFld->name), "UInt32"); break;
+					case UA_NS0ID_INT64: 	  ti.Set(he::Symbols::TypeInfo::Type::T_SInt64, 		str(pFld->name), "Int64"); break;
+					case UA_NS0ID_UINT64: 	  ti.Set(he::Symbols::TypeInfo::Type::T_UInt64, 		str(pFld->name), "UInt64"); break;
+					case UA_NS0ID_FLOAT: 	  ti.Set(he::Symbols::TypeInfo::Type::T_Float, 		str(pFld->name), "Float"); break;
+					case UA_NS0ID_DOUBLE: 	  ti.Set(he::Symbols::TypeInfo::Type::T_Double, 		str(pFld->name), "Double"); break;
+					case UA_NS0ID_STRING: 	  ti.Set(he::Symbols::TypeInfo::Type::T_StringL4, 	str(pFld->name), "String"); break;
+					case UA_NS0ID_DATETIME:   ti.Set(he::Symbols::TypeInfo::Type::T_DateTime, 	str(pFld->name), "DateTime"); break;
+					case UA_NS0ID_GUID: 	  ti.Set(he::Symbols::TypeInfo::Type::T_Guid, 		str(pFld->name), "GUID"); break;
+					case UA_NS0ID_BYTESTRING: ti.Set(he::Symbols::TypeInfo::Type::T_ByteString, 	str(pFld->name), "BYTESTRING"); break;
+					//case UA_NS0ID_XMLELEMENT: ts.ItemType = "XMLELEMENT"; ts.DataType = he::Symbols::TypeInfo::Type::T_Bool; break;
+					// and more...
+					default:
+						XTRACE(XPERRORS, "%04d: %*s    (%d) Type=%d, Opt=%d, Rank=%d, Name=%s: Unknown datatype!",
+							offset, level*4, " ", i,
+							pFld->dataType.identifier.numeric, pFld->isOptional?1:0, pFld->valueRank,
+							str(pFld->name).c_str());
+						return -1;      // ERROR!
+					}
+					XTRACE(XPDIAG2, "%04d: %*s    (%d) Type=%d, Opt=%d, Rank=%d, Name=%s (%s)",
+						offset, level*4, " ", i,
+						pFld->dataType.identifier.numeric, pFld->isOptional?1:0, pFld->valueRank,
+						str(pFld->name).c_str(), ti.ItemType.c_str());
+					offset = offset + ti.Offset;
+					typeNode.AddChild(NULL, ti, offset);
+				}
+				else if (pFld->dataType.namespaceIndex == 3 && pFld->dataType.identifierType == UA_NODEIDTYPE_NUMERIC) {
+					ti.ItemName = str(pFld->name);
+					/**
+					 * Siemens custom NodeIds
+					 * ----------------------
+					 * Numeric identifiers for Siemens - this is a "hack", Siemens uses non-standard
+					 * See: https://www.industry-mobile-support.siemens-info.com/de/article/detail/109780313
+					 */
+					ti.DataType.isStruct = 0;
+					switch (pFld->dataType.identifier.numeric) {
+					case 3001: 	  ti.Set(he::Symbols::TypeInfo::Type::T_UInt8, 		str(pFld->name), "BYTE"); break;
+					case 3002: 	  ti.Set(he::Symbols::TypeInfo::Type::T_UInt16, 		str(pFld->name), "WORD"); break;
+					case 3003: 	  ti.Set(he::Symbols::TypeInfo::Type::T_UInt32, 		str(pFld->name), "DWORD"); break;
+					case 3004: 	  ti.Set(he::Symbols::TypeInfo::Type::T_UInt64, 		str(pFld->name), "LWORD"); break;
+					//case 3011: 	  ti.Set(TypeInfo::Type::T_DateTime,	str(pFld->name), "DT"); break;
+					//case 3012: 	  ti.Set(TypeInfo::Type::T_Char, 		str(pFld->name), "CHAR"); break;
+					//case 3013: 	  ti.Set(TypeInfo::Type::T_WChar, 		str(pFld->name), "WCHAR"); break;
+					case 3014: 	  ti.Set(he::Symbols::TypeInfo::Type::T_StringL4, 	str(pFld->name), "STRING"); break;
+					// and more...
+					default:
+						XTRACE(XPERRORS, "%04d: %*s    (%d) Type=%d, Opt=%d, Rank=%d, Name=%s: Unknown Siemens datatype!",
+							offset, level*4, " ", i,
+							pFld->dataType.identifier.numeric, pFld->isOptional?1:0, pFld->valueRank,
+							str(pFld->name).c_str());
+						return -1;      // ERROR!
+					}
+					XTRACE(XPDIAG2, "%04d: %*s    (%d) Type=%d, Opt=%d, Rank=%d, Name=%s (Siemens \"%s\")",
+						offset, level*4, " ", i,
+						pFld->dataType.identifier.numeric, pFld->isOptional?1:0, pFld->valueRank,
+						str(pFld->name).c_str(), ti.ItemType.c_str());
+					offset = offset + ti.Offset;
+					typeNode.AddChild(NULL, ti, offset);
+				}
+				else if (pFld->dataType.identifierType == UA_NODEIDTYPE_STRING) {
+					//const UA_String& string = pFld->dataType.identifier.string;
+					// struct inside the struct, so recurse...
+					ti.ItemName = str(pFld->name);        // eigentlich redundat, dann können wir aber leichter testen
+					he::Symbols::TypeNode& sub = typeNode.AddChild(NULL, ti, offset);
+					retval = readStructureDefinition(pFld->dataType, ti.ItemName.c_str(), sub, offset, level + 1);
+					if (retval != 0) {
+						return retval;
+					}
+				}
+				else {
+					XTRACE(XPERRORS, "%04d: %*s    (%d) Type=%d, Name=%s: Unknown identifier type %d!",
+						offset, level*4, " ", i,
+						pFld->dataType.identifier.numeric, str(pFld->name).c_str(), pFld->dataType.identifierType);
+					return -1;      // ERROR!
+				}
+			}
+
+            // Todo: fix the datasize!!
+			_db.Add(Name, typeNode);
+
+		} // if read datatype success
+		//UA_NodeId_clear(&nidTmp);
+
+		return retval;
+	}
+
+	UA_StatusCode resolveExtensionObjectType(const UA_NodeId& nodeId, const std::string& Name)
+	{
+		int offset = 0;
+		int level = 0;
+		he::Symbols::TypeNode rootNode;
+		UA_StatusCode ret = readStructureDefinition(nodeId, Name, rootNode, offset, level);
+
+		return ret;
 	}
 };
 
@@ -862,7 +1099,6 @@ public:
 	}
 
 
-
 	UA_UInt16 run_iterate(UA_UInt32 waitInternal) {
 		/*
 		UA_UInt32 last = 0;
@@ -897,6 +1133,145 @@ public:
 		return re;
 		*/
 		return UA_Client_run_iterate(this->_client, waitInternal);
+	}
+
+	// returns table, bytestring, state or nil, nil, state
+	//
+	sol::variadic_results dumpType(const std::string& TypeName, sol::this_state L) {
+
+		sol::variadic_results result;
+		he::Symbols::TypeDB& db = _mgr->_db;                // type cache for serialization
+
+		if (!db.HasTypeByName(TypeName)) {
+/*
+			// show all known types
+			XTRACE(XPDIAG1, "Unknown type: %s", TypeName.c_str());
+			const he::Symbols::TypeDB::tNameMap& map = db.GetTypeMap();
+			for (he::Symbols::TypeDB::tNameMap::const_iterator it = map.begin(); it != map.end(); it++) {
+				 const std::string& typeName = it->first;
+				 const he::Symbols::TypeNode& tn = it->second;
+				 XTRACE(XPDIAG1, "Type name: %s, node type: %s, node encoding: %s", typeName.c_str(), tn.item.ItemType.c_str(), tn.item.ItemEncoding.c_str());
+			}
+*/
+			result.push_back({ L, sol::lua_nil });
+			result.push_back({ L, sol::in_place_type<std::string>, std::string("Type not found!")});
+			return result;
+		}
+
+		const he::Symbols::TypeNode& tn = db.FindTypeByName(TypeName);
+
+		//he::lua::Serializer::Dump()
+
+		he::lua::Serializer::GetTypeDef(L, db, tn);
+		// wrap the native LUA table in a sol::table to return it through the variadic_result vector
+		sol::table table(L, -1);
+		result.push_back(table);
+		lua_pop(L,1);                       // remove the table created earlier from the LUA stack
+
+		return result;
+	}
+
+	// returns table, bytestring, state or nil, nil, state
+	//
+	sol::variadic_results decodeExtensionObject(const std::string& RawData, const std::string& TypeName, sol::this_state L) {
+
+		sol::variadic_results result;
+		he::Symbols::TypeDB& db = _mgr->_db;                // type cache for serialization
+
+		if (!db.HasTypeByName(TypeName)) {
+/*
+			// show all known types
+			XTRACE(XPDIAG1, "Unknown type: %s", TypeName.c_str());
+			const he::Symbols::TypeDB::tNameMap& map = db.GetTypeMap();
+			for (he::Symbols::TypeDB::tNameMap::const_iterator it = map.begin(); it != map.end(); it++) {
+				 const std::string& typeName = it->first;
+				 const he::Symbols::TypeNode& tn = it->second;
+				 XTRACE(XPDIAG1, "Type name: %s, node type: %s, node encoding: %s", typeName.c_str(), tn.item.ItemType.c_str(), tn.item.ItemEncoding.c_str());
+			}
+*/
+			result.push_back({ L, sol::lua_nil });
+			result.push_back({ L, sol::in_place_type<std::string>, std::string("Type not found!")});
+			return result;
+		}
+
+		// Get the data type definition
+		const he::Symbols::TypeNode& tn = db.FindTypeByName(TypeName);
+
+//			// dump again? first the data structure definition, then the data
+//			he::lua::Serializer::Dump(symDef);
+		// deserialize the results into a new table at TOS
+		he::lua::Serializer::Deserialize(L, db, tn, (const uint8_t*)RawData.c_str(), RawData.length());
+
+		// wrap the native LUA table in a sol::table to return it through the variadic_result vector
+		sol::table table(L, -1);
+		result.push_back(table);
+		lua_pop(L,1);                       // remove the table created earlier from the LUA stack
+
+		return result;
+	}
+
+
+	// returns bytestring or nil, error
+	//
+	sol::variadic_results encodeExtensionObject(sol::table newValue /*sol::variadic_args va*/, const std::string& TypeName, sol::this_state L)
+	{
+		sol::variadic_results result;
+		he::Symbols::TypeDB& db = _mgr->_db;                // type cache for serialization
+
+		if (!db.HasTypeByName(TypeName)) {
+/*
+			// show all known types
+			XTRACE(XPDIAG1, "Unknown type: %s", TypeName.c_str());
+			const he::Symbols::TypeDB::tNameMap& map = db.GetTypeMap();
+			for (he::Symbols::TypeDB::tNameMap::const_iterator it = map.begin(); it != map.end(); it++) {
+				 const std::string& typeName = it->first;
+				 const he::Symbols::TypeNode& tn = it->second;
+				 XTRACE(XPDIAG1, "Type name: %s, node type: %s, node encoding: %s", typeName.c_str(), tn.item.ItemType.c_str(), tn.item.ItemEncoding.c_str());
+			}
+*/
+			result.push_back({ L, sol::lua_nil });
+			result.push_back({ L, sol::in_place_type<std::string>, std::string("Type not found!")});
+			return result;
+		}
+
+		// Get the data type definition
+		const he::Symbols::TypeNode& symDef = db.FindTypeByName(TypeName);
+		if (!symDef.item.isValid()) {
+			// We don't have a valid symbol definition (likely the PLC uses some unknown
+			// data types), so this function cannot be used.
+			// Use raw I/O instead!
+			result.push_back({ L, sol::lua_nil });
+			result.push_back({ L, sol::in_place, "Symbol definition is not valid, cannot serialize. Use raw I/O functions to exchange data instead!" });
+			return result;
+		}
+
+		// get the table on the TOS
+		int  ref = newValue.registry_index();
+		lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+
+		// serialize the table at TOS into a binary data stream
+		UA_ByteString bs;
+		UA_ByteString_init(&bs);
+		bs.data = new UA_Byte[8192];
+		bs.length = 8192;
+		bs.length = he::lua::Serializer::Serialize(L, db, symDef, bs.data, bs.length);
+
+		lua_pop(L, 1);
+
+		if (bs.length == 0) {
+			// This is *NOT* normal - most likely the symDef is not available, as
+			// the PLC uses some unknown data types...
+			delete[] bs.data;
+			// return an error.
+			result.push_back({ L, sol::lua_nil });
+			result.push_back({ L, sol::in_place, "Failed to serialize, possibly data or data type definition is invalid!" });
+			return result;
+		}
+
+		result.push_back({ L, sol::in_place_type<std::string>, std::string((const char*)bs.data, bs.length)});
+
+		delete[] bs.data;
+		return result;
 	}
 
 };
@@ -1047,7 +1422,7 @@ public:
 	//			// dump again? first the data structure definition, then the data
 	//			he::lua::Serializer::Dump(symDef);
 				// deserialize the results into a new table at TOS
-				he::lua::Serializer::Deserialize(L, symDef, bs.data, bs.length);
+				he::lua::Serializer::Deserialize(L, _ioThread->GetDB(), symDef, bs.data, bs.length);
 				// wrap the native LUA table in a sol::table to return it through the variadic_result vector
 				sol::table table(L, -1);
 				result.push_back(table);
@@ -1080,7 +1455,7 @@ public:
 		if (symDef.item.isValid) {
 			if (retval == UA_STATUSCODE_GOOD && _ioThread->IsCyclicIoRunning() && bs.data /*&& symDef.item.isValid()*/) {
 				// deserialize the results into a new table at TOS
-				he::lua::Serializer::Deserialize(L, symDef, bs.data, bs.length);
+				he::lua::Serializer::Deserialize(L, _ioThread->GetDB(), symDef, bs.data, bs.length);
 				// wrap the native LUA table in a sol::table to return it through the variadic_result vector
 				sol::table table(L, -1);
 				result.push_back(table);
@@ -1107,7 +1482,7 @@ public:
 
 		sol::variadic_results result;
 		const he::Symbols::TypeNode& symDef = _ioThread->GetSymDefRd();
-		const TypeNode_Proxy tnp(symDef);
+		const TypeNode_Proxy tnp(_ioThread->GetDB(), symDef);
 		return tnp;
 	}
 
@@ -1117,7 +1492,7 @@ public:
 
 		sol::variadic_results result;
 		const he::Symbols::TypeNode& symDef = _ioThread->GetSymDefWr();
-		const TypeNode_Proxy tnp(symDef);
+		const TypeNode_Proxy tnp(_ioThread->GetDB(), symDef);
 		return tnp;
 		//return getType(L, symDef);
 	}
@@ -1155,7 +1530,7 @@ public:
 		}
 
 		// deserialize the results into a new table at TOS
-		int ret = he::lua::Serializer::GetTypeDef(L, symDef);
+		int ret = he::lua::Serializer::GetTypeDef(L, _ioThread->GetDB(), symDef);
 		if (ret != 1) {
 			// some error occurred
 			result.push_back({ L, sol::lua_nil });
@@ -1217,7 +1592,7 @@ public:
 		UA_ByteString_init(&bs);
 		bs.data = new UA_Byte[8192];
 		bs.length = 8192;
-		bs.length = he::lua::Serializer::Serialize(L, symDef, bs.data, bs.length);
+		bs.length = he::lua::Serializer::Serialize(L, _ioThread->GetDB(), symDef, bs.data, bs.length);
 
 		lua_pop(L, 1);
 /*
@@ -1364,7 +1739,11 @@ void reg_opcua_client(sol::table& module) {
 		"createSubscription", &UA_Client_Proxy::createSubscription,
 		"subscribeNode", &UA_Client_Proxy::subscribeNode,
 		"callMethod", &UA_Client_Proxy::callMethod,
-		"run_iterate", &UA_Client_Proxy::run_iterate
+		"run_iterate", &UA_Client_Proxy::run_iterate,
+		// type cache database access methods
+		"dumpType", &UA_Client_Proxy::dumpType,
+		"decodeExtensionObject", &UA_Client_Proxy::decodeExtensionObject,
+		"encodeExtensionObject", &UA_Client_Proxy::encodeExtensionObject
 	);
 
 	module.new_usertype<UA_ClientConfig_Proxy_CyclicIO>("ClientConfig_CyclicIO",

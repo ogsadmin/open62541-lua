@@ -142,10 +142,17 @@ public:
 	UA_StatusCode readValue(const UA_NodeId nodeId, UA_Variant *outValue) {
 		return UA_Server_readValue(_server, nodeId, outValue);
 	}
-	UA_StatusCode readExtensionObjectValue(const UA_NodeId nodeId, UA_Variant *outValue) {
-        // TODO::implement
-		return UA_Server_readValue(_server, nodeId, outValue);
+	UA_StatusCode readExtensionObjectValue(const UA_NodeId nodeId, UA_Variant *outValue, UA_NodeId* outExpandedNodeId) {
+		// TODO::implement
+		//return UA_Server_readValue(_server, nodeId, outValue);
+		throw "unimplemented!";
 	}
+	UA_StatusCode readStructureDefinition(const UA_NodeId nodeId, UA_StructureDefinition *outValue)
+	{
+		// TODO::implement
+		throw "unimplemented!";
+	}
+
 	UA_StatusCode readDataValue(const UA_NodeId nodeId, UA_DataValue *outDataValue) {
 		UA_ReadValueId id; UA_ReadValueId_init(&id);
 		id.nodeId = nodeId;
@@ -399,6 +406,11 @@ public:
 			void *handle) {
 		return UA_Server_forEachChildNodeCall(_server, parentNodeId, callback, handle);
 	}
+	UA_StatusCode resolveExtensionObjectType(const UA_NodeId& nodeId, const std::string& Name)
+	{
+		throw "not implemented!";
+	}
+
 };
 
 class UA_ServerConfig_Proxy {

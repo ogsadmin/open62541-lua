@@ -34,7 +34,7 @@ sol::variadic_results TypeNode_Proxy::serialize(sol::table newValue, sol::this_s
 	UA_ByteString_init(&bs);
 	bs.data = new UA_Byte[8192];
 	bs.length = 8192;
-	bs.length = he::lua::Serializer::Serialize(L, symDef, bs.data, bs.length);
+	bs.length = he::lua::Serializer::Serialize(L, _db, symDef, bs.data, bs.length);
 
 	lua_pop(L, 1);
 	if (bs.length == 0) {
@@ -66,7 +66,7 @@ sol::variadic_results TypeNode_Proxy::deserialize(const std::string& sData, sol:
 	if (symDef.item.isValid) {
 		if (bs.data) {
 			// deserialize the results into a new table at TOS
-			he::lua::Serializer::Deserialize(L, symDef, bs.data, bs.length);
+			he::lua::Serializer::Deserialize(L, _db, symDef, bs.data, bs.length);
 			// wrap the native LUA table in a sol::table to return it through the variadic_result vector
 			sol::table table(L, -1);
 			result.push_back(table);
@@ -104,7 +104,7 @@ sol::variadic_results TypeNode_Proxy::asTable(sol::this_state L)
 	}
 
 	// deserialize the results into a new table at TOS
-	int ret = he::lua::Serializer::GetTypeDef(L, symDef);
+	int ret = he::lua::Serializer::GetTypeDef(L, _db, symDef);
 	if (ret != 1) {
 		// some error occurred
 		result.push_back({ L, sol::lua_nil });

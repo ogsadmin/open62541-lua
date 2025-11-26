@@ -16,6 +16,7 @@ TypeDB::TypeDB()
 {
 }
 
+/*
 TypeDB::TypeDB(void* pDatatypes, size_t nDTSize)
 {
 	Init(pDatatypes, nDTSize);
@@ -27,7 +28,7 @@ TypeDB::~TypeDB()
 }
 
 void TypeDB::Init(void* pDatatypes, size_t nDTSize)
-{    /*
+{
 	m_pDatatypes = new BYTE[nDTSize+sizeof(ULONG)];
 	if (!m_pDatatypes) {
 		throw "EOutOfMemory";
@@ -39,8 +40,9 @@ void TypeDB::Init(void* pDatatypes, size_t nDTSize)
 	{
 		m_vDatatypeArray.push_back((PAdsDatatypeEntry)&m_pDatatypes[offs]);
 		offs += *(PULONG)&m_pDatatypes[offs];
-	}*/
+	}
 }
+*/
 /*
 const PAdsDatatypeEntry TypeDB::FindTypeByName(const char* name) const
 {
@@ -53,11 +55,29 @@ const PAdsDatatypeEntry TypeDB::FindTypeByName(const char* name) const
 	return NULL;
 }
 */
-const TypeNode& TypeDB::FindTypeByName(const char* name) const
+const TypeNode& TypeDB::FindTypeByName(const std::string& ItemType)
 {
-	TypeNode node;
+	const TypeNode& node = _types[ItemType];
 	return node;
 }
+
+bool TypeDB::HasTypeByName(const std::string& ItemType)
+{
+    return _types.count(ItemType) != 0;
+}
+
+void TypeDB::Add(const std::string& varName, const TypeNode& node)
+{
+	_vars[varName] = node.item.ItemType;
+	_types[node.item.ItemType] = node;
+}
+
+void TypeDB::Clear()
+{
+    _types.clear();
+}
+
+
 // -----------------------------------------------------------------------------
 // the per-symbol info
 
@@ -78,7 +98,7 @@ bool TypeInfo::isValid() const
 	return (this->DataType.raw != 0);
 }
 
-void TypeInfo::Set(TypeInfo::Type t, const UTF8String& ItemName, const UTF8String& ItemType, int DataSize)
+void TypeInfo::Set(TypeInfo::Type t, const std::string& ItemName, const std::string& ItemType, int DataSize)
 {
 	this->ItemName      = ItemName;
 	this->ItemType 		= ItemType;

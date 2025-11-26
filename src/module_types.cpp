@@ -323,6 +323,9 @@ void reg_opcua_types(sol::table& module) {
 		"asBytes", [](const UA_Variant& var, int32_t cnt, sol::this_state L) {
 			RETURN_OK(std::string, std::string((const char*)var.data, cnt))
 		},
+		"asBytes", [](const UA_Variant& var, sol::this_state L) {
+			RETURN_OK(std::string, std::string((const char*)var.data, var.type->memSize))
+		},
 		"asDateTime", [](const UA_Variant& var, sol::this_state L) {
 			if (var.type == &UA_TYPES[UA_TYPES_DATETIME] ) {
 				UA_DateTime dt = 0L;
@@ -387,7 +390,8 @@ void reg_opcua_types(sol::table& module) {
 		"hasServerTimestamp", sol::property([](UA_DataValue& obj) { return obj.hasServerTimestamp; }),
 		"hasSourcePicoseconds", sol::property([](UA_DataValue& obj) { return obj.hasSourcePicoseconds; }),
 		"hasServerPicoseconds", sol::property([](UA_DataValue& obj) { return obj.hasServerPicoseconds; }),
-		MAP_PROPERTY_HAS(UA_DataValue, UA_Variant, value, hasValue),
+		// he:: return this objects value as UA_Variant:
+		MAP_PROPERTY_HAS(UA_DataValue, UA_Variant, value, hasValue),            // [<node>.dataValue].value (UA-Variant)
 		"status", sol::property(
 			[](UA_DataValue& obj) { return obj.status; },
 			[](UA_DataValue& obj, UA_StatusCode status) { obj.status = status, obj.hasStatus = true; }

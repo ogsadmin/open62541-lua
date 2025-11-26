@@ -316,7 +316,7 @@ public:
 	UA_Variant getExtensionObjectValue() const {
 		UA_Variant val; UA_Variant_init(&val);
 		auto reader = _mgr->getAttributeReader();
-		UA_StatusCode re = reader->readExtensionObjectValue(_id, &val);
+		UA_StatusCode re = reader->readExtensionObjectValue(_id, &val, NULL);
 		return val;
 	}
 	UA_StatusCode setExtensionObjectValue(const UA_NodeId& dataTypeNodeId, const UA_Variant& val) const {
@@ -327,6 +327,110 @@ public:
 		}
 		return re;
 	}
+
+	// Read the raw data bytes of an extension object and return it as (binary encoded) bytestring
+	// Call resolveExtensionObjectType() to get the data type definition and use it to deserialize
+	sol::variadic_results getExtensionObject(sol::this_state L) const
+	{
+		sol::variadic_results result;
+
+		//
+		// Get the extension object actual data as raw bytestring
+		//
+		//UA_NodeId ExpandedNodeId;         // we actually don't need this (!!!)
+		UA_Variant val; UA_Variant_init(&val);
+		auto reader = _mgr->getAttributeReader();
+		UA_StatusCode re = reader->readExtensionObjectValue(_id, &val, NULL); //, &ExpandedNodeId);
+		if (re != UA_STATUSCODE_GOOD) {
+			// return nil, errormessage
+			result.push_back(sol::nil);
+			result.push_back({ L, sol::in_place_type<std::string>, UA_StatusCode_name(re) });
+			return result;
+		}
+
+		if (val.type == &UA_TYPES[UA_TYPES_BYTESTRING]) {
+			// push binary string instead of UA_Variant
+			UA_ByteString *bs = (UA_ByteString *)val.data;
+			std::string value((char*)bs->data, bs->length);
+			result.push_back({ L, sol::in_place_type<std::string>, value});
+		}
+		else {
+			// push the original variant
+			result.push_back({ L, sol::in_place_type<UA_Variant>, val});
+		}
+
+		// push the node-id for the data type definition
+		//result.push_back({ L, sol::in_place_type<UA_NodeId>, ExpandedNodeId});
+		return result;
+	}
+
+	// Convert from bytestring to lua table
+	sol::variadic_results decodeExtensionObject(std::string val, sol::this_state L) const
+	{
+		sol::variadic_results result;
+
+
+		result.push_back({ L, sol::in_place_type<std::string>, val});
+	}
+
+	// If this node points to an extension object, then read the data type definition
+	// (recursively) and add to our type cache db
+	// NOTE: The _mgr owns the cache DB, so all data types are cached for a specific client
+	//       and therefore invalidated/reloaded if the connection is dropped/restarted.
+	sol::variadic_results resolveExtensionObjectType(sol::this_state L) const
+	{
+		sol::variadic_results result;
+
+		//
+		// Read the data type (node id / name), so we can resolve the type
+		//
+		UA_NodeId DataTypeNodeId;
+		auto reader = _mgr->getAttributeReader();
+		UA_StatusCode re = reader->readDataType(_id, &DataTypeNodeId);
+		//re = UA_Client_readDataTypeAttribute(_client, cycNode.nidNodeId, &cycNode.nidDataType);
+		if (re != UA_STATUSCODE_GOOD) {
+			// return nil, errormessage
+			result.push_back(sol::nil);
+			result.push_back({ L, sol::in_place_type<std::string>, UA_StatusCode_name(re) });
+			return result;
+		}
+
+		// (recursively) Walk the data type definition and copy it to our internal symbol cache
+		re = _mgr->resolveExtensionObjectType(DataTypeNodeId, toString(DataTypeNodeId).c_str());
+		if (re != UA_STATUSCODE_GOOD) {
+			// return nil, errormessage
+			result.push_back(sol::nil);
+			result.push_back({ L, sol::in_place_type<std::string>, UA_StatusCode_name(re) });
+			return result;
+		}
+
+		// push the data type name (cache lookup key) and node-id for the data type definition
+		result.push_back({ L, sol::in_place_type<std::string>, toString(DataTypeNodeId) });
+		result.push_back({ L, sol::in_place_type<UA_NodeId>, DataTypeNodeId});
+
+		return result;
+	}
+
+	sol::variadic_results getStructureDefinition(sol::this_state L) const
+	{
+		sol::variadic_results result;
+
+		UA_Variant val; UA_Variant_init(&val);
+		UA_StructureDefinition stru; UA_StructureDefinition_init(&stru);
+		auto reader = _mgr->getAttributeReader();
+		UA_StatusCode re = reader->readStructureDefinition(_id, &stru);
+		if (re != UA_STATUSCODE_GOOD) {
+			// return nil, errormessage
+			result.push_back(sol::nil);
+			result.push_back({ L, sol::in_place_type<std::string>, UA_StatusCode_name(re) });
+			return result;
+		}
+
+		result.push_back({ L, sol::in_place_type<UA_Variant>, val});
+		return result;
+	}
+
+
 
 };
 

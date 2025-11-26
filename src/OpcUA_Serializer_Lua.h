@@ -25,10 +25,11 @@ protected:
 	//UA_Client* _client;
 	//ClientNodeMgr* _mgr;
 	//typedef std::function<void(UA_UInt32 monId, UA_DataValue value, UA_UInt32 subId, void *monContext)> SubscribeCallback;
+	he::Symbols::TypeDB _db;
 
 public:
 	TypeNode_Proxy() {};
-	TypeNode_Proxy(const he::Symbols::TypeNode& tn) : Node(tn) {};
+	TypeNode_Proxy(he::Symbols::TypeDB db, const he::Symbols::TypeNode& tn) : _db(db), Node(tn) {};
 	he::Symbols::TypeNode   Node;
 
 	const char* GetItemName();

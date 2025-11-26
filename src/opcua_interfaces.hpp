@@ -19,7 +19,8 @@ public:
 	virtual UA_StatusCode readContainsNoLoops(const UA_NodeId nodeId, UA_Boolean *outContainsNoLoops) = 0;
 	virtual UA_StatusCode readEventNotifier(const UA_NodeId nodeId, UA_Byte *outEventNotifier) = 0;
 	virtual UA_StatusCode readValue(const UA_NodeId nodeId, UA_Variant *outValue) = 0;
-	virtual UA_StatusCode readExtensionObjectValue(const UA_NodeId nodeId, UA_Variant *outValue) = 0;
+	virtual UA_StatusCode readExtensionObjectValue(const UA_NodeId nodeId, UA_Variant *outValue, UA_NodeId* outExpandedNodeId) = 0;
+	virtual UA_StatusCode readStructureDefinition(const UA_NodeId nodeId, UA_StructureDefinition *outValue) = 0;
 	virtual UA_StatusCode readDataValue(const UA_NodeId nodeId, UA_DataValue *outDataValue) = 0;
 	virtual UA_StatusCode readDataType(const UA_NodeId nodeId, UA_NodeId *outDataType) = 0;
 	virtual UA_StatusCode readValueRank(const UA_NodeId nodeId, UA_Int32 *outValueRank) = 0;
@@ -142,6 +143,8 @@ public:
 	virtual UA_StatusCode forEachChildNodeCall(UA_NodeId parentNodeId, 
 			UA_NodeIteratorCallback callback,
 			void *handle) = 0;
+
+	virtual UA_StatusCode resolveExtensionObjectType(const UA_NodeId& nodeId, const std::string& Name) = 0;
 };
 
 #define RETURN_RESULT(XT, X) \
