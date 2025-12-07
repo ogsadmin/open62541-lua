@@ -100,7 +100,9 @@ public:
 	UA_NodeId _id;
 	UA_NodeId _referenceType;
 	UA_NodeClass _class;
-	//UA_NodeId _dataType;      // TODO: cache datatype NodeID for ExtensionObjects
+	// TODO: Initialize on the first ExtensionObject access (for the first read value attribute)
+	//UA_NodeId _nidDataType;      // cache datatype NodeID for ExtensionObjects
+	//UA_NodeId _nidEncoding;      // cache encoding NodeID for ExtensionObjects
 
 	virtual ~UA_Node() {
 		UA_NodeId_clear(&_id);
@@ -337,10 +339,11 @@ public:
 		//
 		// Get the extension object actual data as raw bytestring
 		//
-		//UA_NodeId ExpandedNodeId;         // we actually don't need this (!!!)
+		UA_NodeId EncodingNodeId;         // This is the encoding used (Siemens: TE_xxx) and needed for writing data later!
+		UA_NodeId_init(&EncodingNodeId);
 		UA_Variant val; UA_Variant_init(&val);
 		auto reader = _mgr->getAttributeReader();
-		UA_StatusCode re = reader->readExtensionObjectValue(_id, &val, NULL); //, &ExpandedNodeId);
+		UA_StatusCode re = reader->readExtensionObjectValue(_id, &val, &EncodingNodeId);
 		if (re != UA_STATUSCODE_GOOD) {
 			// return nil, errormessage
 			result.push_back(sol::nil);
@@ -359,10 +362,58 @@ public:
 			result.push_back({ L, sol::in_place_type<UA_Variant>, val});
 		}
 
-		// push the node-id for the data type definition
-		//result.push_back({ L, sol::in_place_type<UA_NodeId>, ExpandedNodeId});
+		// push the node-id for the encoding definition
+		result.push_back({ L, sol::in_place_type<UA_NodeId>, EncodingNodeId});
+
+        // cleanup
+		UA_Variant_clear(&val);
 		return result;
 	}
+
+	// Set the extension objects value
+	//sol::variadic_results
+	int setExtensionObject(const std::string& newValue, const UA_NodeId& EncodingNodeId, sol::this_state L)
+	{
+/*
+		if (_wr.Encoding.length() > 0) {
+			// CoDeSys RasPi hack:
+			retval_wr = writeExtensionObjectValue(_wr.nidNodeId, _wr.nidEncoding, &tmp);
+		} else {
+			// Default: use data type
+			//retval_wr = writeExtensionObjectValue(_wr.nidNodeId, _wr.nidDataType, &tmp);
+			retval_wr = writeExtensionObjectValue(_wr.nidNodeId, _wr.EncodingNodeId, &tmp);
+		}
+*/
+		// Similar to UA_Client_writeValueAttribute, but returns the "raw" (undecoded)
+		// data of an extension object as binary string.
+		// This then allows LUA to decode the blob (e.g. using luastruct).
+		// See:
+		// - https://github.com/open62541/open62541/issues/3108
+		// - https://github.com/open62541/open62541/issues/3787
+		// - https://github.com/open62541/open62541/tree/master/examples/custom_datatype
+		// - https://groups.google.com/g/open62541/c/DIrQsGDQ8k4
+		UA_Variant myVariant; 					/* Variants can hold scalar values and arrays of any type */
+		UA_Variant_init(&myVariant);
+		// build the extension object
+		UA_ExtensionObject dataValue;
+		dataValue.encoding = UA_EXTENSIONOBJECT_ENCODED_BYTESTRING;
+		dataValue.content.encoded.typeId = EncodingNodeId;
+		dataValue.content.encoded.body.data = (UA_Byte*)newValue.c_str();
+		dataValue.content.encoded.body.length = newValue.length();
+
+		UA_Variant_setScalarCopy(&myVariant, &dataValue, &UA_TYPES[UA_TYPES_EXTENSIONOBJECT]);
+		if (myVariant.type == &UA_TYPES[UA_TYPES_STRING]) {
+			// enforce bytestring (if not yet)
+			myVariant.type = &UA_TYPES[UA_TYPES_BYTESTRING];
+		}
+
+		auto writer = _mgr->getAttributeWriter();
+		UA_StatusCode retval = writer->writeValue(_id, &myVariant);
+		//UA_StatusCode retval = UA_Client_writeValueAttribute(_client, nodeId, &myVariant);
+		UA_Variant_clear(&myVariant);
+		return retval;
+	}
+
 
 	// Convert from bytestring to lua table
 	sol::variadic_results decodeExtensionObject(std::string val, sol::this_state L) const

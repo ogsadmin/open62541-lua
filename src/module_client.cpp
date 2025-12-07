@@ -135,7 +135,7 @@ public:
 									 outDataValue, &UA_TYPES[UA_TYPES_VARIANT]);
 #endif
 	}
-	UA_StatusCode readExtensionObjectValue(const UA_NodeId nodeId, UA_Variant *outValue, UA_NodeId* outExpandedNodeId) {
+	UA_StatusCode readExtensionObjectValue(const UA_NodeId nodeId, UA_Variant *outValue, UA_NodeId* outEncodingNodeId) {
 		// Similar to UA_Client_readValueAttribute, but returns the "raw" (undecoded)
 		// data of an extension object as binary string.
 		// This then allows LUA to decode the blob (e.g. using luastruct).
@@ -181,24 +181,27 @@ public:
 		if (res->value.type->typeKind == UA_DATATYPEKIND_EXTENSIONOBJECT) {
 			UA_ExtensionObject* eo = (UA_ExtensionObject*)(res->value.data);
 			//UA_ExtensionObjectEncoding encoding = eo->encoding;
-			if (outExpandedNodeId) {
+			if (outEncodingNodeId) {
 				// create a new NodeID as a copy of the exisiting one - cleanup first!
-				switch(outExpandedNodeId->identifierType) {
+				UA_NodeId_copy(&eo->content.encoded.typeId, outEncodingNodeId);
+/*
+				switch(outEncodingNodeId->identifierType) {
 					case UA_NODEIDTYPE_STRING:
 					case UA_NODEIDTYPE_BYTESTRING:      // malloced types...
-						UA_String_clear(&outExpandedNodeId->identifier.string);
+						UA_String_clear(&outEncodingNodeId->identifier.string);
 						break;
 				}
-				*outExpandedNodeId = eo->content.encoded.typeId;
+				*outEncodingNodeId = eo->content.encoded.typeId;
 				UA_String sTmp;
-				switch(outExpandedNodeId->identifierType) {
+				switch(outEncodingNodeId->identifierType) {
 					case UA_NODEIDTYPE_STRING:
 					case UA_NODEIDTYPE_BYTESTRING:      // malloced types...
-						UA_ByteString_allocBuffer(&sTmp, outExpandedNodeId->identifier.string.length);
-						memcpy(sTmp.data, outExpandedNodeId->identifier.string.data, outExpandedNodeId->identifier.string.length);
-						outExpandedNodeId->identifier.string = sTmp;  // use our newly allocated object
+						UA_ByteString_allocBuffer(&sTmp, outEncodingNodeId->identifier.string.length);
+						memcpy(sTmp.data, outEncodingNodeId->identifier.string.data, outEncodingNodeId->identifier.string.length);
+						outEncodingNodeId->identifier.string = sTmp;  // use our newly allocated object
 						break;
 				}
+*/
 			}
 			//UA_NodeId nodeId = eo->content.encoded.typeId;
 			int length = eo->content.encoded.body.length;

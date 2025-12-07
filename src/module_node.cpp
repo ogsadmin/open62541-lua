@@ -97,6 +97,7 @@ void reg_opcua_node(sol::table& module) {
 		"getExtensionObjectValue", &UA_Node::getExtensionObjectValue,       	// get as Variant
 		"setExtensionObjectValue", &UA_Node::setExtensionObjectValue,       	// set from Variant
 		"getExtensionObject", &UA_Node::getExtensionObject,                 	// get raw value as Bytestring
+		"setExtensionObject", &UA_Node::setExtensionObject,                 	// set raw value as Bytestring
 		"resolveExtensionObjectType", &UA_Node::resolveExtensionObjectType,     // resolve the data type definition and add it to our symbol cache
 		"decodeExtensionObject", &UA_Node::decodeExtensionObject,               // convert raw bytestring to lua table
 		"getStructureDefinition", &UA_Node::getStructureDefinition
