@@ -783,6 +783,49 @@ UA_StatusCode TOpcUA_IOThread::readStructureDefinition(UA_NodeId& nidNodeId, con
 			else if (pFld->dataType.identifierType == UA_NODEIDTYPE_STRING) {
 				//const UA_String& string = pFld->dataType.identifier.string;
 				// struct inside the struct, so recurse...
+
+				// Check for CtrlX bugs. CtrlX sendet falsche "DataType" nodeIds, die auf dem Server nicht existiern!
+				if (false) {
+					// CtrlX (bad):                ______________________ (added crap)
+					// 	"types/plc/app/Application/T_tool_ogs_to_plc/$$S:T_ogs_connection"
+					// Expected:
+					// 	"types/plc/app/Application/T_ogs_connection"
+					std::string dtName = str(pFld->dataType.identifier.string);       // nodeID des "DataType"
+					size_t pos2 = dtName.find("/$$S:");
+					if (pos2 != std::string::npos) {
+						// This might be the famous CtrlX bug, check a bit more to be sure
+						// The root path (for the above example) would be - use the last path segment for the check
+						// 	"types/plc/app/Application/T_tool_ogs_to_plc"
+						std::string dtRootPath = str(nidNodeId.identifier.string);        // get the last path segment of the current data type name
+						size_t end = dtRootPath.rfind('/');
+						std::string dtRootName = "";
+						if (end != std::string::npos) {
+							dtRootName = dtRootPath.substr(end+1);
+						}
+						size_t pos1 = dtName.rfind('/', pos2 - 1);
+						if (pos1 != std::string::npos) {
+							std::string crap = dtName.substr(pos1+1, pos2-pos1 + 4);
+							std::string crapMatch = dtRootName + std::string("/$$S:");
+							if (crap == crapMatch) {
+								XTRACE(XPWARN, "%04d: %*s    (%d) CtrlX BUG: Bad DataType nodeId: %s!",
+									offset, level*4, " ", i, dtName.c_str());
+								std::string fixed = dtName.replace(pos1+1, pos2-pos1 + 4, "");    // "/$$S:" has 5 chars
+								XTRACE(XPWARN, "%04d: %*s    (%d) CtrlX BUG: Bad DataType fixed nodeId: %s!",
+									offset, level*4, " ", i, fixed.c_str());
+								// replace the datatype node id string:
+								UA_String_clear(&pFld->dataType.identifier.string);
+								UA_String sTmp;
+								UA_ByteString_allocBuffer(&sTmp, dtName.length());
+								memcpy(sTmp.data, dtName.c_str(), dtName.length());
+								pFld->dataType.identifier.string = sTmp;  // use our newly allocated object
+							}
+						}
+						else {
+							// This does not follow the BUG pattern of CtrlX.
+							// Fallthrough, as this maybe is a valid datatype?
+						}
+					}
+				}
 				ti.ItemName = str(pFld->name);        // eigentlich redundant, dann können wir aber leichter testen
 				he::Symbols::TypeNode& sub = sym.AddChild(NULL, ti, offset);
 				retval = readStructureDefinition(pFld->dataType, str(pFld->name).c_str(), sub, offset, level + 1);
