@@ -647,7 +647,8 @@ UA_StatusCode TOpcUA_IOThread::readStructureDefinition(UA_NodeId& nidNodeId, con
 		AnsiString StructType = "(unknown!)";
 		switch(def->structureType){
 		case UA_STRUCTURETYPE_STRUCTURE:
-			ts.DataType.isArray = 0;
+			ts = sym.item;
+			//ts.DataType.isArray = isArray;
 			ts.DataType.isStruct = 1;
 			ts.DataType.type = he::Symbols::TypeInfo::Type::S_StructFixed;
 			ts.Offset = 0;
@@ -656,7 +657,8 @@ UA_StatusCode TOpcUA_IOThread::readStructureDefinition(UA_NodeId& nidNodeId, con
 		// See OPCUA-Specs https://reference.opcfoundation.org/Core/Part6/v104/docs/5.2.7
 		// Max. 32 optional fields are allowed for a structure (single DWORD with bitfield)!
 		case UA_STRUCTURETYPE_STRUCTUREWITHOPTIONALFIELDS:
-			ts.DataType.isArray = 0;
+			ts = sym.item;
+			//ts.DataType.isArray = isArray;
 			ts.DataType.isStruct = 1;
 			ts.DataType.type = he::Symbols::TypeInfo::Type::S_StructOptFld;
 			ts.Offset = 4;
@@ -669,8 +671,9 @@ UA_StatusCode TOpcUA_IOThread::readStructureDefinition(UA_NodeId& nidNodeId, con
 		}
 		ts.ItemType = (char*)def->defaultEncodingId.identifier.string.data;
 		ts.ItemName = Name;
-		XTRACE(XPDIAG2, "%04d: %*s[%d] Struct: Type=%d (%s), Fields=%d Name=%s", offset, level*4, " ", level,
-			def->structureType, StructType.c_str(), def->fieldsSize, def->defaultEncodingId.identifier.string.data);
+		XTRACE(XPDIAG2, "%04d: %*s[%d] Struct: Type=%d (%s), Fields=%d Name=%.*s", offset, level*4, " ", level,
+			def->structureType, StructType.c_str(), def->fieldsSize,
+			def->defaultEncodingId.identifier.string.length, def->defaultEncodingId.identifier.string.data);
 		offset += ts.Offset;
 		sym.Set(NULL, ts);
 		for (int i = 0; i < def->fieldsSize; i++) {

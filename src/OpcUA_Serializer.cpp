@@ -100,7 +100,12 @@ static int deserialize(lua_State* L, const he::Symbols::TypeDB& db, const he::Sy
 	#ifdef XDUMP
 	XTRACE(XPDIAG1, "%04d: %*s[%d] Struct %s (%s)", addr, level*4, " ", level, ts.ItemName.c_str(), ts.ItemType.c_str());
 	#endif
-	lua_pushstring(L, ts.ItemName.c_str());
+	if (node.item.DataType.isArray && node.item.DataType.isStruct) {
+		// arrays of struct: don't add a name, but append to array instead
+	}
+	else {
+		lua_pushstring(L, ts.ItemName.c_str());
+    }
 	lua_newtable(L);
 	const uint8_t* pBegin = pBuf;
 	pBuf = pBuf + addr;
@@ -120,6 +125,12 @@ static int deserialize(lua_State* L, const he::Symbols::TypeDB& db, const he::Sy
 		const he::Symbols::TypeInfo& ti = tn.item;
 		int iCount = 1;
 		if (ti.DataType.isArray) {
+#ifdef DEBUG_ARRAY_OF_STRUCT
+			if (ti.ItemName == "unique") {
+				// debug array of struct decoding
+				XTRACE(XPDIAG1, "xxxx");
+			}
+#endif // DEBUG_ARRAY_OF_STRUCT
 			iCount = *((uint32_t*)pBuf);
 			addr += 4;
 			pBuf += 4;
@@ -181,7 +192,20 @@ static int deserialize(lua_State* L, const he::Symbols::TypeDB& db, const he::Sy
 	}
 	// finish table
 	if (!isRoot) {
-		lua_settable(L, -3);
+		if (node.item.DataType.isArray && node.item.DataType.isStruct) {
+			// arrays of struct: don't add a name, but append to array instead
+			// L[-2] is the parent table
+			// L[-1] is the variable data table
+			lua_pushinteger(L, lua_objlen(L, -2) + 1);
+			lua_insert(L, -2);
+			lua_settable(L, -3);
+		}
+		else {
+			// L[-3] is the parent table
+			// L[-2] is the variable name string
+			// L[-1] is the variable data table
+			lua_settable(L, -3);
+		}
 	}
 	return addr;
 }
@@ -697,9 +721,19 @@ static void _pushTypeDef(lua_State* L, const he::Symbols::TypeInfo& ti)
 	lua_pushinteger(L, ti.DataType.raw);
 	lua_settable(L, -3);
 	if (ti.DataType.isStruct) {
-		lua_pushstring(L, "_typeid");
+		lua_pushstring(L, "_typeid_struct");
 		lua_pushinteger(L, ti.DataType.raw);
 		lua_settable(L, -3);
+	}
+	if (ti.DataType.isArray) {
+		lua_pushstring(L, "_array_rank");
+		lua_pushinteger(L, ti.ValueRank);       // != 0 --> Array!
+		lua_settable(L, -3);
+		if (ti.ArrayDimensions.size() > 0) {
+			lua_pushstring(L, "_array_dimension");
+			lua_pushinteger(L, ti.ArrayDimensions[0]);       // != 0 --> Array!
+			lua_settable(L, -3);
+		}
 	}
 	lua_pushstring(L, "_flags");
 	lua_pushinteger(L, ti.Flags.raw);
@@ -707,7 +741,7 @@ static void _pushTypeDef(lua_State* L, const he::Symbols::TypeInfo& ti)
 	lua_pushstring(L, "_offset");
 	lua_pushinteger(L, ti.Offset);
 	lua_settable(L, -3);
-    // TODO: add array properties and more flags
+	// TODO: add array properties and more flags
 }
 
 // simple type definition dump
@@ -725,7 +759,11 @@ static void _getTypeDef(lua_State* L, const he::Symbols::TypeDB& db, const he::S
 		const he::Symbols::TypeInfo& ti = tn.item;
 		int iCount = 1;
 		if (ti.DataType.isArray) {
-			// NOT supported
+			// NOT (really) supported
+			int count = ti.ValueRank;
+			if (count != 1) {
+                // not supported!
+			}
 		}
 		for (int iSeq = 0; iSeq < iCount; iSeq++) {
 			if (ti.DataType.isStruct)

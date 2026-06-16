@@ -526,13 +526,20 @@ public:
 		UA_StatusCode retval = __UA_Client_readAttribute(_client, &nidNodeId,
 			UA_ATTRIBUTEID_DATATYPEDEFINITION, buf, &UA_TYPES[UA_TYPES_STRUCTUREDEFINITION]);
 		if (0 == retval) {
+#ifdef DEBUG_ARRAY_OF_STRUCT
+			if (Name == "unique") {
+				// debug array of struct decoding
+				XTRACE(XPDIAG1, "xxxx");
+			}
+#endif //DEBUG_ARRAY_OF_STRUCT
 			// got the data definition!
 			he::Symbols::TypeInfo ts;
 			UA_StructureDefinition *def = (UA_StructureDefinition*)buf;
 			AnsiString StructType = "(unknown!)";
 			switch(def->structureType){
 			case UA_STRUCTURETYPE_STRUCTURE:
-				ts.DataType.isArray = 0;
+				ts = typeNode.item;
+				//ts.DataType.isArray = typeNode.item.DataType.isArray;
 				ts.DataType.isStruct = 1;
 				ts.DataType.type = he::Symbols::TypeInfo::Type::S_StructFixed;
 				ts.Offset = 0;
@@ -541,7 +548,8 @@ public:
 			// See OPCUA-Specs https://reference.opcfoundation.org/Core/Part6/v104/docs/5.2.7
 			// Max. 32 optional fields are allowed for a structure (single DWORD with bitfield)!
 			case UA_STRUCTURETYPE_STRUCTUREWITHOPTIONALFIELDS:
-				ts.DataType.isArray = 0;
+				ts = typeNode.item;
+				//ts.DataType.isArray = isArray;
 				ts.DataType.isStruct = 1;
 				ts.DataType.type = he::Symbols::TypeInfo::Type::S_StructOptFld;
 				ts.Offset = 4;
@@ -561,8 +569,9 @@ public:
 			ts.ItemName = Name;
 			ts.ItemType = toString(nidNodeId); 						// "DT_" (data type)
 			ts.ItemEncoding = toString(def->defaultEncodingId); 	// "TE_" (structure encoding)
-			XTRACE(XPDIAG2, "%04d: %*s[%d] Struct: Type=%d (%s), Fields=%d Name=%s", offset, level*4, " ", level,
-				def->structureType, StructType.c_str(), def->fieldsSize, def->defaultEncodingId.identifier.string.data);
+			XTRACE(XPDIAG2, "%04d: %*s[%d] Struct: Type=%d (%s), Fields=%d Name=%.*s", offset, level*4, " ", level,
+				def->structureType, StructType.c_str(), def->fieldsSize,
+				def->defaultEncodingId.identifier.string.length, def->defaultEncodingId.identifier.string.data);
 			offset += ts.Offset;
 			typeNode.Set(NULL, ts);
 			for (int i = 0; i < def->fieldsSize; i++) {
@@ -676,6 +685,12 @@ public:
 					//const UA_String& string = pFld->dataType.identifier.string;
 					// struct inside the struct, so recurse...
 					ti.ItemName = str(pFld->name);        // eigentlich redundat, dann können wir aber leichter testen
+#ifdef DEBUG_ARRAY_OF_STRUCT
+					if (ti.ItemName == "unique") {
+						// debug array of struct decoding
+						XTRACE(XPDIAG1, "xxxx");
+					}
+#endif // DEBUG_ARRAY_OF_STRUCT
 					he::Symbols::TypeNode& sub = typeNode.AddChild(NULL, ti, offset);
 					retval = readStructureDefinition(pFld->dataType, ti.ItemName.c_str(), sub, offset, level + 1);
 					if (retval != 0) {
